@@ -28,6 +28,7 @@ export default function PreferenciasPage() {
   const [isVegan, setIsVegan] = useState(false)
   const [isHealthy, setIsHealthy] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const [profileId, setProfileId] = useState('')
   const [familyId, setFamilyId] = useState('')
   const router = useRouter()
@@ -71,52 +72,56 @@ export default function PreferenciasPage() {
       return
     }
     setLoading(true)
+    setError('')
+
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) {
+      setError('No hay sesión activa')
+      setLoading(false)
+      return
+    }
+
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
 
     try {
-      const supabase = createClient()
-      const weekNumber = getWeekNumber(new Date())
-      const year = new Date().getFullYear()
-
-      const payload = {
-        likes,
-        dislikes,
-        allergies,
-        is_diabetic: isDiabetic,
-        is_vegetarian: isVegetarian,
-        is_vegan: isVegan,
-        preferences_completed: true,
-        week_number: weekNumber,
-        year,
-        completed_at: new Date().toISOString(),
-      }
-
-      const { data: existing } = await supabase
+      // Borrar registros anteriores de este usuario
+      await supabase
         .from('user_preferences')
-        .select('id')
-        .eq('profile_id', profileId)
-        .maybeSingle()
+        .delete()
+        .eq('profile_id', user.id)
 
-      let error
-      if (existing) {
-        const { error: updateError } = await supabase
-          .from('user_preferences')
-          .update(payload)
-          .eq('id', existing.id)
-        error = updateError
-      } else {
-        const { error: insertError } = await supabase
-          .from('user_preferences')
-          .insert({ profile_id: profileId, family_id: familyId, ...payload })
-        error = insertError
+      // Insertar registro fresco
+      const { error: insertError } = await supabase
+        .from('user_preferences')
+        .insert({
+          profile_id: user.id,
+          family_id: familyId,
+          likes,
+          dislikes,
+          allergies,
+          is_diabetic: isDiabetic,
+          is_vegetarian: isVegetarian,
+          is_vegan: isVegan,
+          preferences_completed: true,
+          week_number: weekNumber,
+          year,
+          completed_at: new Date().toISOString(),
+          notified_at: new Date().toISOString(),
+        })
+
+      if (insertError) {
+        console.log('Insert error:', JSON.stringify(insertError))
+        throw insertError
       }
-
-      if (error) throw error
 
       router.push('/inicio')
 
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Error desconocido'
-      alert('Error al guardar: ' + message)
+      console.log('Catch error:', err)
+      const e = err as { message?: string; details?: string }
+      setError(e?.message || e?.details || 'Error al guardar preferencias')
     } finally {
       setLoading(false)
     }
@@ -502,14 +507,28 @@ export default function PreferenciasPage() {
             Siguiente →
           </button>
         ) : (
-          <button
-            className="btn-primary"
-            onClick={guardarPreferencias}
-            disabled={loading}
-            style={{flex: 1}}
-          >
-            {loading ? 'Guardando...' : '✅ Guardar preferencias'}
-          </button>
+          <div style={{flex: 1, display: 'flex', flexDirection: 'column', gap: '8px'}}>
+            {error && (
+              <div style={{
+                fontSize: '13px',
+                color: 'var(--red)',
+                background: 'rgba(239,68,68,0.08)',
+                border: '1px solid rgba(239,68,68,0.2)',
+                borderRadius: 'var(--r-sm)',
+                padding: '10px 12px',
+                textAlign: 'center',
+              }}>
+                {error}
+              </div>
+            )}
+            <button
+              className="btn-primary"
+              onClick={guardarPreferencias}
+              disabled={loading}
+            >
+              {loading ? 'Guardando...' : '✅ Guardar preferencias'}
+            </button>
+          </div>
         )}
       </div>
     </div>

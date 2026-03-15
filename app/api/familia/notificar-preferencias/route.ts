@@ -49,32 +49,36 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No hay miembros en la familia' }, { status: 400 })
     }
 
+    let notifiedCount = 0
+
     for (const member of members) {
-      // Obtener el registro más reciente del miembro (si existe)
+      // Saltar a miembros que ya tienen preferencias completadas
+      const { data: yaCompleto } = await supabase
+        .from('user_preferences')
+        .select('id')
+        .eq('profile_id', member.id)
+        .eq('preferences_completed', true)
+        .maybeSingle()
+
+      if (yaCompleto) continue
+
+      // Obtener el registro pendiente más reciente (si existe)
       const { data: existing } = await supabase
         .from('user_preferences')
-        .select('id, preferences_completed')
+        .select('id')
         .eq('profile_id', member.id)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle()
 
       if (existing) {
-        if (existing.preferences_completed) {
-          // Ya completó — solo actualizar notified_at, sin cambiar su estado
-          await supabase
-            .from('user_preferences')
-            .update({ notified_at: now })
-            .eq('id', existing.id)
-        } else {
-          // Pendiente — refrescar notified_at para asegurar redirección
-          await supabase
-            .from('user_preferences')
-            .update({ notified_at: now, week_number: weekNumber, year })
-            .eq('id', existing.id)
-        }
+        // Refrescar notified_at para asegurar redirección
+        await supabase
+          .from('user_preferences')
+          .update({ notified_at: now, week_number: weekNumber, year })
+          .eq('id', existing.id)
       } else {
-        // Sin registro previo — crear uno nuevo para esta semana
+        // Sin registro previo — crear uno nuevo
         await supabase
           .from('user_preferences')
           .insert({
@@ -86,9 +90,11 @@ export async function POST(req: NextRequest) {
             preferences_completed: false,
           })
       }
+
+      notifiedCount++
     }
 
-    return NextResponse.json({ success: true, notified: members.length })
+    return NextResponse.json({ success: true, notified: notifiedCount })
   } catch (err) {
     console.error('[notificar-preferencias]', err)
     return NextResponse.json({ error: 'Error interno' }, { status: 500 })

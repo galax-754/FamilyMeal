@@ -6,15 +6,14 @@ import { createClient } from '@/lib/supabase/client'
 
 /**
  * Intercepta cualquier página de la app y redirige automáticamente
- * a /preferencias si el usuario tiene una notificación pendiente
- * del admin y aún no ha completado sus preferencias.
+ * a /preferencias solo si el usuario tiene una notificación pendiente
+ * Y no tiene ningún registro con preferences_completed = true.
  */
 export function NotificacionGuard() {
   const router = useRouter()
   const pathname = usePathname()
 
   useEffect(() => {
-    // Evitar loop infinito si ya estamos en /preferencias
     if (pathname === '/preferencias') return
 
     async function checkPendingNotification() {
@@ -22,17 +21,25 @@ export function NotificacionGuard() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      const { data: pendingNotif } = await supabase
+      // Si ya completó en algún momento, no redirigir nunca
+      const { data: completado } = await supabase
         .from('user_preferences')
-        .select('notified_at, preferences_completed')
+        .select('id')
         .eq('profile_id', user.id)
-        .eq('preferences_completed', false)
-        .not('notified_at', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(1)
+        .eq('preferences_completed', true)
         .maybeSingle()
 
-      if (pendingNotif) {
+      if (completado) return
+
+      // Solo redirigir si tiene notificación pendiente
+      const { data: notificado } = await supabase
+        .from('user_preferences')
+        .select('notified_at')
+        .eq('profile_id', user.id)
+        .not('notified_at', 'is', null)
+        .maybeSingle()
+
+      if (notificado) {
         router.push('/preferencias')
       }
     }
