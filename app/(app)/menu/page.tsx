@@ -2,184 +2,90 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import { ShoppingCart } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { WeeklyGrid } from '@/components/menu/WeeklyGrid'
-import { MenuGridSkeleton } from '@/components/ui/Skeleton'
-import { ErrorMessage } from '@/components/ui/ErrorMessage'
-import { ConfirmModal } from '@/components/ui/Modal'
-import { useToast } from '@/components/ui/Toast'
+import {
+  Sun, Sunset, Moon, ChevronRight,
+  Clock, DollarSign, CheckCircle,
+  ShoppingCart, Vote, Calendar,
+  Shuffle, ChefHat,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { Meal, WeeklyMenu, MealType } from '@/types'
-import { getWeekStart, toDateString, MEAL_TYPES } from '@/lib/utils'
+
+const DAYS = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+
+function getWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+}
+
+const CATEGORIAS = [
+  { key: 'desayuno', label: 'Desayuno', time: '8:00 AM',  Icon: Sun,    iconColor: '#f59e0b' },
+  { key: 'comida',   label: 'Comida',   time: '2:00 PM',  Icon: Sunset, iconColor: '#f97316' },
+  { key: 'cena',     label: 'Cena',     time: '8:00 PM',  Icon: Moon,   iconColor: '#6366f1' },
+]
 
 export default function MenuPage() {
-  const [weekStart, setWeekStart] = useState<Date>(getWeekStart())
-  const [entries, setEntries] = useState<WeeklyMenu[]>([])
-  const [meals, setMeals] = useState<Meal[]>([])
+  const router = useRouter()
+  const [menuItems, setMenuItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(false)
-  const [familyId, setFamilyId] = useState<string | null>(null)
+  const [familyId, setFamilyId] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
-  const [loadingSlot, setLoadingSlot] = useState<string | undefined>()
-  const [showShuffle, setShowShuffle] = useState(false)
-  const [shuffling, setShuffling] = useState(false)
+  const [totalMatches, setTotalMatches] = useState(0)
   const [generatingList, setGeneratingList] = useState(false)
 
-  const toast = useToast()
-  const router = useRouter()
-  const supabase = createClient()
+  useEffect(() => { loadMenu() }, [])
 
-  const loadFamily = async () => {
+  async function loadMenu() {
+    const supabase = createClient()
     const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-    const { data: prof } = await supabase.from('profiles').select('family_id, role').eq('id', user.id).single()
-    setFamilyId(prof?.family_id ?? null)
-    setIsAdmin(prof?.role === 'admin')
-    return prof?.family_id ?? null
-  }
+    if (!user) return
 
-  const loadMenu = async (fId: string, wStart: Date) => {
-    const { data, error: err } = await supabase
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
+
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('family_id, role')
+      .eq('id', user.id)
+      .single()
+
+    if (!profile?.family_id) { setLoading(false); return }
+    setFamilyId(profile.family_id)
+    setIsAdmin(profile.role === 'admin')
+
+    const { data: menu } = await supabase
       .from('weekly_menu')
-      .select('*, meal:meals(*)')
-      .eq('family_id', fId)
-      .eq('week_start', toDateString(wStart))
+      .select(`
+        id, day_of_week, cook_id,
+        meals (
+          id, name, description, category,
+          meal_emoji, image_url, estimated_cost,
+          prep_time_minutes, difficulty,
+          is_diabetic_friendly, chef_tip,
+          ingredients, instructions
+        )
+      `)
+      .eq('family_id', profile.family_id)
+      .eq('week_number', weekNumber)
+      .eq('year', year)
+      .order('day_of_week')
 
-    if (err) throw err
-    setEntries(data ?? [])
+    setMenuItems(menu || [])
+    setTotalMatches(menu?.length || 0)
+    setLoading(false)
   }
 
-  const loadMeals = async (fId: string) => {
-    const { data, error: err } = await supabase
-      .from('meals')
-      .select('*, meal_votes(*)')
-      .eq('family_id', fId)
-      .order('name')
-
-    if (err) throw err
-    const scored = (data ?? []).map((m) => ({
-      ...m,
-      vote_score: (m.meal_votes as Array<{ vote: number }>).reduce((s: number, v) => s + v.vote, 0),
-    }))
-    setMeals(scored)
+  function getMealForDay(day: number, categoryKey: string) {
+    return menuItems.find(item => {
+      const meal = Array.isArray(item.meals) ? item.meals[0] : item.meals
+      return item.day_of_week === day &&
+        meal?.category?.toLowerCase() === categoryKey
+    })
   }
 
-  const init = async () => {
-    setLoading(true)
-    setError(false)
-    try {
-      const fId = await loadFamily()
-      if (!fId) return
-      await Promise.all([loadMenu(fId, weekStart), loadMeals(fId)])
-    } catch {
-      setError(true)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { init() }, [])
-
-  useEffect(() => {
-    if (!familyId) return
-    setLoading(true)
-    loadMenu(familyId, weekStart)
-      .catch(() => setError(true))
-      .finally(() => setLoading(false))
-  }, [weekStart, familyId])
-
-  const handleAssign = async (dayOfWeek: number, mealType: MealType, mealId: string) => {
-    if (!familyId) return
-    const slotKey = `${dayOfWeek}-${mealType}`
-    setLoadingSlot(slotKey)
-    try {
-      const { error } = await supabase.from('weekly_menu').upsert(
-        {
-          family_id: familyId,
-          week_start: toDateString(weekStart),
-          day_of_week: dayOfWeek,
-          meal_type: mealType,
-          meal_id: mealId,
-        },
-        { onConflict: 'family_id,week_start,day_of_week,meal_type' }
-      )
-      if (error) throw error
-      await loadMenu(familyId, weekStart)
-      toast.success('Menú actualizado correctamente.')
-    } catch {
-      toast.error('Algo salió mal. Intenta de nuevo.')
-    } finally {
-      setLoadingSlot(undefined)
-    }
-  }
-
-  const handleRemove = async (entryId: string) => {
-    if (!familyId) return
-    try {
-      await supabase.from('weekly_menu').delete().eq('id', entryId)
-      setEntries((prev) => prev.filter((e) => e.id !== entryId))
-    } catch {
-      toast.error('Algo salió mal. Intenta de nuevo.')
-    }
-  }
-
-  const handleShuffle = async () => {
-    if (!familyId || meals.length === 0) {
-      toast.warning('Agrega comidas primero para poder sortear.')
-      return
-    }
-    setShowShuffle(true)
-  }
-
-  const doShuffle = async () => {
-    if (!familyId) return
-    setShuffling(true)
-    try {
-      const pool = [...meals].sort(() => Math.random() - 0.5)
-      let idx = 0
-      const newEntries: Array<{
-        family_id: string
-        week_start: string
-        day_of_week: number
-        meal_type: string
-        meal_id: string
-      }> = []
-
-      for (let day = 0; day < 7; day++) {
-        for (const mt of MEAL_TYPES) {
-          const meal = pool[idx % pool.length]
-          idx++
-          newEntries.push({
-            family_id: familyId,
-            week_start: toDateString(weekStart),
-            day_of_week: day,
-            meal_type: mt.key,
-            meal_id: meal.id,
-          })
-        }
-      }
-
-      await supabase.from('weekly_menu')
-        .delete()
-        .eq('family_id', familyId)
-        .eq('week_start', toDateString(weekStart))
-
-      const { error } = await supabase.from('weekly_menu').insert(newEntries)
-      if (error) throw error
-
-      await loadMenu(familyId, weekStart)
-      toast.success('Menú sorteado exitosamente.')
-    } catch {
-      toast.error('Algo salió mal. Intenta de nuevo.')
-    } finally {
-      setShuffling(false)
-      setShowShuffle(false)
-    }
-  }
-
-  const handleGenerateList = async () => {
-    if (!familyId) return
+  async function generarListaCompras() {
     setGeneratingList(true)
     try {
       const res = await fetch('/api/lista-compras', {
@@ -188,76 +94,284 @@ export default function MenuPage() {
         body: JSON.stringify({ family_id: familyId }),
       })
       const data = await res.json()
-      if (!res.ok) {
-        toast.error(data.error || 'Error al generar la lista')
-        return
-      }
-      router.push('/menu/lista')
-    } catch {
-      toast.error('Algo salió mal. Intenta de nuevo.')
+      if (data.success) router.push('/tareas')
     } finally {
       setGeneratingList(false)
     }
   }
 
+  if (loading) {
+    return (
+      <div style={{ padding: '20px 16px' }}>
+        {[1, 2, 3].map(i => (
+          <div
+            key={i}
+            className="skeleton"
+            style={{ height: '120px', marginBottom: '12px', borderRadius: 'var(--r)' }}
+          />
+        ))}
+      </div>
+    )
+  }
+
   return (
-    <div>
-      <PageHeader title="Menú semanal" />
+    <div style={{ paddingBottom: '40px' }}>
 
-      <div className="page-content stack-4">
-        {loading ? (
-          <MenuGridSkeleton />
-        ) : error ? (
-          <ErrorMessage type="generic" onRetry={init} />
-        ) : (
-          <>
-            <WeeklyGrid
-              entries={entries}
-              meals={meals}
-              weekStart={weekStart}
-              onWeekChange={setWeekStart}
-              onAssign={handleAssign}
-              onRemove={handleRemove}
-              onShuffle={handleShuffle}
-              loadingSlot={loadingSlot}
-            />
+      {/* Header */}
+      <div style={{
+        padding: '20px 16px 12px',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+      }}>
+        <div>
+          <h1 style={{
+            fontSize: '22px',
+            fontWeight: 900,
+            color: 'var(--text)',
+            marginBottom: '2px',
+          }}>
+            Menú semanal
+          </h1>
+          <p style={{ fontSize: '13px', color: 'var(--muted)' }}>
+            Semana {getWeekNumber(new Date())} · {totalMatches}/21 comidas
+          </p>
+        </div>
 
-            {/* Sorteo de cocineros — solo admin */}
-            {familyId && (
-              <SorteoCocineros familyId={familyId} isAdmin={isAdmin} />
-            )}
-
-            {/* Botón de lista del súper — aparece cuando hay comidas en el menú */}
-            {entries.length > 0 && (
-              <button
-                className="btn-primary"
-                onClick={handleGenerateList}
-                disabled={generatingList}
-                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-              >
-                <ShoppingCart style={{ width: 18, height: 18 }} />
-                {generatingList ? 'Generando lista...' : 'Generar lista del súper'}
-              </button>
-            )}
-          </>
-        )}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '6px 12px',
+          borderRadius: '50px',
+          background: totalMatches >= 21 ? 'rgba(34,197,94,0.1)' : 'var(--amber-soft)',
+          border: `1px solid ${totalMatches >= 21 ? 'rgba(34,197,94,0.3)' : 'rgba(245,158,11,0.3)'}`,
+        }}>
+          <CheckCircle size={14} color={totalMatches >= 21 ? 'var(--green)' : 'var(--amber)'} />
+          <span style={{
+            fontSize: '12px',
+            fontWeight: 700,
+            color: totalMatches >= 21 ? 'var(--green)' : 'var(--amber)',
+          }}>
+            {totalMatches >= 21 ? 'Completo' : `${totalMatches}/21`}
+          </span>
+        </div>
       </div>
 
-      <ConfirmModal
-        open={showShuffle}
-        onClose={() => setShowShuffle(false)}
-        onConfirm={doShuffle}
-        title="Sortear menú"
-        message="¿Quieres reemplazar todo el menú de esta semana con un sorteo aleatorio? Se perderá el menú actual."
-        confirmText="¡Sortear!"
-        cancelText="Cancelar"
-        loading={shuffling}
-      />
+      {/* Banner si no está completo */}
+      {totalMatches < 21 && (
+        <div style={{ padding: '0 16px 16px' }}>
+          <div className="card">
+            <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '12px' }}>
+              Faltan {21 - totalMatches} comidas para completar el menú.
+            </p>
+            <button
+              className="btn-ghost"
+              onClick={() => router.push('/comidas?modo=votar')}
+              style={{
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '8px',
+              }}
+            >
+              <Vote size={16} />
+              Seguir votando
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Grid de 7 días */}
+      <div style={{ padding: '0 16px' }}>
+        {[1, 2, 3, 4, 5, 6, 7].map(day => {
+          const items = CATEGORIAS.map(cat => {
+            const menuItem = getMealForDay(day, cat.key)
+            const meal = menuItem
+              ? (Array.isArray(menuItem.meals) ? menuItem.meals[0] : menuItem.meals)
+              : null
+            return { ...cat, menuItem, meal }
+          })
+          const hasAny = items.some(i => i.meal)
+
+          return (
+            <div key={day} style={{ marginBottom: '20px' }}>
+
+              {/* Header del día */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '8px',
+                paddingBottom: '8px',
+                borderBottom: '1px solid var(--border)',
+              }}>
+                <Calendar size={16} color="var(--amber)" />
+                <span style={{ fontSize: '15px', fontWeight: 800, color: 'var(--text)' }}>
+                  {DAYS[day]}
+                </span>
+                {hasAny && (
+                  <span style={{ marginLeft: 'auto', fontSize: '11px', color: 'var(--muted)' }}>
+                    {items.filter(i => i.meal).length}/3
+                  </span>
+                )}
+              </div>
+
+              {/* Comidas del día */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                {items.map(({ key, label, time, Icon, iconColor, meal }) => (
+                  <div
+                    key={key}
+                    onClick={() => meal && router.push(`/comidas/${meal.id}`)}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px',
+                      padding: '10px 12px',
+                      background: meal ? 'var(--surface)' : 'var(--surface2)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--r-sm)',
+                      cursor: meal ? 'pointer' : 'default',
+                      opacity: meal ? 1 : 0.5,
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {/* Imagen o ícono de categoría */}
+                    <div style={{
+                      width: '52px',
+                      height: '52px',
+                      borderRadius: '10px',
+                      overflow: 'hidden',
+                      flexShrink: 0,
+                      background: 'var(--surface2)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                      {meal?.image_url ? (
+                        <img
+                          src={meal.image_url}
+                          alt={meal.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <Icon size={24} color={iconColor} strokeWidth={1.5} />
+                      )}
+                    </div>
+
+                    {/* Info */}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                        marginBottom: '2px',
+                      }}>
+                        <Icon size={11} color={iconColor} strokeWidth={2} />
+                        <span style={{ fontSize: '11px', color: 'var(--hint)' }}>
+                          {label} · {time}
+                        </span>
+                      </div>
+
+                      <div style={{
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        color: meal ? 'var(--text)' : 'var(--hint)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}>
+                        {meal?.name || 'Sin asignar'}
+                      </div>
+
+                      {meal && (
+                        <div style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          marginTop: '3px',
+                        }}>
+                          {meal.prep_time_minutes && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <Clock size={10} color="var(--hint)" />
+                              <span style={{ fontSize: '11px', color: 'var(--hint)' }}>
+                                {meal.prep_time_minutes} min
+                              </span>
+                            </div>
+                          )}
+                          {meal.estimated_cost && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <DollarSign size={10} color="var(--hint)" />
+                              <span style={{ fontSize: '11px', color: 'var(--hint)' }}>
+                                ${meal.estimated_cost}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {meal && (
+                      <ChevronRight size={16} color="var(--hint)" strokeWidth={2} style={{ flexShrink: 0 }} />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Acciones al final */}
+      <div style={{ padding: '8px 16px 0' }}>
+
+        {isAdmin && totalMatches > 0 && (
+          <SorteoCocineros familyId={familyId} isAdmin={isAdmin} />
+        )}
+
+        {totalMatches >= 21 && (
+          <button
+            className="btn-primary"
+            onClick={generarListaCompras}
+            disabled={generatingList}
+            style={{
+              width: '100%',
+              marginTop: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
+          >
+            <ShoppingCart size={18} />
+            {generatingList ? 'Generando lista...' : 'Generar lista del súper'}
+          </button>
+        )}
+
+        {totalMatches < 21 && (
+          <button
+            className="btn-ghost"
+            onClick={() => router.push('/comidas?modo=votar')}
+            style={{
+              width: '100%',
+              marginTop: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px',
+            }}
+          >
+            <Vote size={16} />
+            Seguir votando ({21 - totalMatches} faltan)
+          </button>
+        )}
+      </div>
     </div>
   )
 }
 
-// ─── Componente de sorteo de cocineros ───────────────────────────────────────
+// ─── Sorteo de cocineros ──────────────────────────────────────────────────────
 
 interface AssignmentPreview {
   day_num: number
@@ -280,7 +394,6 @@ function SorteoCocineros({
   const [checking, setChecking] = useState(true)
   const [showPreview, setShowPreview] = useState(false)
 
-  // Verificar si ya hay sorteo confirmado esta semana
   const checkExisting = useCallback(async () => {
     try {
       const res = await fetch(`/api/sorteo-cocineros?family_id=${familyId}`)
@@ -336,21 +449,32 @@ function SorteoCocineros({
           className="btn-primary"
           onClick={sortear}
           disabled={loading}
-          style={{ width: '100%' }}
+          style={{
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+          }}
         >
-          {loading ? 'Sorteando...' : '🎲 Sortear quién cocina cada día'}
+          <Shuffle size={16} />
+          {loading ? 'Sorteando...' : 'Sortear quién cocina cada día'}
         </button>
       )}
 
       {showPreview && (
         <div className="card">
           <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
             fontSize: '15px',
             fontWeight: 700,
             color: 'var(--text)',
             marginBottom: '16px',
           }}>
-            🎲 Resultado del sorteo
+            <ChefHat size={18} color="var(--amber)" />
+            Resultado del sorteo
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
@@ -390,7 +514,7 @@ function SorteoCocineros({
                     {item.cook_name}
                   </span>
                 </div>
-                <span style={{ fontSize: '16px' }}>👨‍🍳</span>
+                <ChefHat size={16} color="var(--muted)" />
               </div>
             ))}
           </div>
@@ -400,17 +524,19 @@ function SorteoCocineros({
               className="btn-ghost"
               onClick={sortear}
               disabled={loading}
-              style={{ flex: 1 }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              🔀 Re-sortear
+              <Shuffle size={14} />
+              Re-sortear
             </button>
             <button
               className="btn-primary"
               onClick={confirmar}
               disabled={loading}
-              style={{ flex: 1 }}
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
             >
-              ✅ Confirmar
+              <CheckCircle size={14} />
+              Confirmar
             </button>
           </div>
         </div>
@@ -426,7 +552,7 @@ function SorteoCocineros({
           alignItems: 'center',
           gap: '10px',
         }}>
-          <span style={{ fontSize: '20px' }}>✅</span>
+          <CheckCircle size={18} color="var(--green)" />
           <span style={{ fontSize: '13px', color: 'var(--green)', fontWeight: 600 }}>
             Sorteo confirmado — ya aparece en Tareas
           </span>

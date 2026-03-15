@@ -82,6 +82,37 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
+  // ── Asignar lavadores (regla: el que cocina no friega) ──────────────────────
+  const memberIds = members.map(m => m.id)
+
+  for (const day of DAYS) {
+    const cookId = assignments[day.num].id
+
+    // Excluir al cocinero de los disponibles para lavar
+    const availableWashers = memberIds.filter(id => id !== cookId)
+
+    if (availableWashers.length === 0) continue
+
+    const washerIndex = (day.num - 1) % availableWashers.length
+    const dishWasherId = availableWashers[washerIndex]
+
+    // Si hay más de un disponible, asignar persona diferente para utensilios
+    const utensilsWasherId = availableWashers.length > 1
+      ? availableWashers[(washerIndex + 1) % availableWashers.length]
+      : availableWashers[0]
+
+    await supabase
+      .from('cooking_assignments')
+      .update({
+        dishes_washer_id: dishWasherId,
+        utensils_washer_id: utensilsWasherId,
+      })
+      .eq('family_id', family_id)
+      .eq('day_of_week', day.num)
+      .eq('week_number', weekNumber)
+      .eq('year', year)
+  }
+
   // Actualizar cook_id en weekly_menu donde ya hay entradas
   for (const day of DAYS) {
     await supabase

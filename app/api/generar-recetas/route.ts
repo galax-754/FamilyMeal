@@ -179,6 +179,21 @@ Evitar: ${dislikesArray.slice(0, 3).join(', ') || 'nada'}.
 Alergias: ${Array.from(allAllergies).join(', ') || 'ninguna'}.
 No repetir: ${recentMeals.slice(0, 3).join(', ') || 'nada'}.
 
+EQUIPAMIENTO DISPONIBLE (MUY IMPORTANTE):
+- Estufa de gas con quemadores
+- Sartén antiadherente
+- Olla grande y olla mediana
+- Comal
+- Licuadora
+- NO tienen horno en casa
+Todas las recetas DEBEN poder cocinarse solo en estufa.
+Cualquier paso que mencione "horno", "hornear", "gratinar", "precalentar" o "bandeja al horno" está ESTRICTAMENTE PROHIBIDO.
+En vez de técnicas de horno usar:
+- Sellar en sartén a fuego alto
+- Cocinar tapado a fuego bajo
+- Dorar en comal
+- Vaporear en olla
+
 ESTILO DE INSTRUCCIONES:
 - Usa lenguaje simple y cotidiano, NO términos técnicos ni en francés
 - En vez de "sellar la proteína" → "dora el pollo a fuego alto hasta que esté café por fuera"
@@ -186,7 +201,8 @@ ESTILO DE INSTRUCCIONES:
 - En vez de "brunoise" → "pica muy finito en cubitos pequeños"
 - En vez de "sofreír" → "cocina en aceite a fuego medio moviendo de vez en cuando"
 - Cada paso debe explicar POR QUÉ se hace, no solo el QUÉ. Ejemplo: "Seca bien el pollo con papel (esto hace que dore mejor y no se cueza al vapor)"
-- Temperaturas en términos prácticos: "fuego bajo", "fuego medio", "fuego alto" o "horno a 180°C (temperatura normal del horno)"
+- Temperaturas en términos prácticos: "fuego bajo", "fuego medio", "fuego alto"
+- NUNCA mencionar "horno" en ningún paso, ni como alternativa
 - Tiempos claros: "unos 3-4 minutos", nunca "reducir a glaze" ni términos ambiguos
 
 RESPONDE SOLO con este JSON sin texto adicional:

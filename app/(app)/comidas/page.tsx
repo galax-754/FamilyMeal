@@ -1,19 +1,27 @@
 'use client'
 
 import { useEffect, useState, useCallback, Suspense } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Plus, Search, Utensils } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { MealCard } from '@/components/meals/MealCard'
 import { SwipeCard } from '@/components/meals/SwipeCard'
+import { MatchCelebration } from '@/components/meals/MatchCelebration'
 import { MealCardSkeleton } from '@/components/ui/Skeleton'
 import { ErrorMessage, EmptyState } from '@/components/ui/ErrorMessage'
 import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
-import { registrarVoto } from '@/lib/votes'
 import { Meal, MealCategory, Profile, SwipeVote } from '@/types'
 import { getWeekStart, toDateString } from '@/lib/utils'
+
+function getWeekNumber(date: Date): number {
+  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
+  const dayNum = d.getUTCDay() || 7
+  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
+  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+}
 
 const FILTERS: Array<{ value: MealCategory | 'todas'; label: string }> = [
   { value: 'todas',    label: 'Todas' },
@@ -25,10 +33,6 @@ const FILTERS: Array<{ value: MealCategory | 'todas'; label: string }> = [
 
 
 const TARGET = 7
-const CONFETTI_COLORS = ['#f59e0b', '#22c55e', '#60a5fa', '#ef4444', '#a78bfa', '#fb923c', '#34d399']
-const CATEGORY_NAMES: Record<string, string> = {
-  desayuno: 'Desayuno', comida: 'Comida', cena: 'Cena',
-}
 
 type Modo = 'lista' | 'swipe'
 
@@ -40,6 +44,7 @@ interface VotingProgress {
 
 function ComidasContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const initialModo = searchParams.get('modo') === 'votar' ? 'swipe' : 'lista'
 
   const [meals, setMeals] = useState<Meal[]>([])
@@ -54,13 +59,9 @@ function ComidasContent() {
   const [members, setMembers] = useState<Profile[]>([])
   const [swipeVotes, setSwipeVotes] = useState<SwipeVote[]>([])
   const [swipeIndex, setSwipeIndex] = useState(0)
-  const [showMatch, setShowMatch] = useState(false)
-  const [matchedMealName, setMatchedMealName] = useState('')
-  const [matchedDay, setMatchedDay] = useState('')
-  const [matchedCategory, setMatchedCategory] = useState('')
-  const [swipingMealId, setSwipingMealId] = useState<string | null>(null)
   const [progress, setProgress] = useState<VotingProgress>({ desayunos: 0, comidas: 0, cenas: 0 })
-  const [menuCompleto, setMenuCompleto] = useState(false)
+  const [showMatchAnimation, setShowMatchAnimation] = useState(false)
+  const [matchMeal, setMatchMeal] = useState<{ name: string; category: string; image_url?: string; assignedDay?: number } | null>(null)
 
   const toast = useToast()
   const supabase = createClient()
@@ -145,7 +146,6 @@ function ComidasContent() {
         cenas:     entries.filter((e) => e.meal_type === 'cena').length,
       }
       setProgress(prog)
-      setMenuCompleto(prog.desayunos + prog.comidas + prog.cenas >= 21)
 
       const unvotedIdx = scored.findIndex(
         (m) => !(votes ?? []).some((v) => v.profile_id === user.id && v.meal_id === m.id)
@@ -185,60 +185,139 @@ function ComidasContent() {
     }
   }
 
-  const handleSwipeVote = async (mealId: string, voto: boolean) => {
-    if (!userId || !familyId || swipingMealId) return
-    setSwipingMealId(mealId)
-    try {
-      const { isMatch, assignedDay, assignedCategory } = await registrarVoto(
-        supabase, mealId, userId, familyId, voto
-      )
+  const checkForMatch = async (meal: Meal) => {
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
 
-      const { data: freshVotes } = await supabase
-        .from('meal_votes')
-        .select('*')
-        .eq('family_id', familyId)
+    const { data: membersList } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('family_id', familyId)
 
-      setSwipeVotes((freshVotes ?? []) as SwipeVote[])
+    const totalMembers = membersList?.length || 1
 
-      if (isMatch) {
-        const matchedMeal = meals.find((m) => m.id === mealId)
-        setMatchedMealName(matchedMeal?.name ?? 'La comida')
-        setMatchedDay(assignedDay ?? '')
-        setMatchedCategory(assignedCategory ?? '')
-        setShowMatch(true)
+    const { data: likes } = await supabase
+      .from('meal_votes')
+      .select('profile_id')
+      .eq('meal_id', meal.id)
+      .eq('family_id', familyId)
+      .eq('week_number', weekNumber)
+      .eq('year', year)
+      .eq('vote', true)
 
-        setProgress((prev) => {
-          const cat = assignedCategory ?? ''
-          const next = {
-            desayunos: prev.desayunos + (cat === 'desayuno' ? 1 : 0),
-            comidas:   prev.comidas   + (cat === 'comida'   ? 1 : 0),
-            cenas:     prev.cenas     + (cat === 'cena'     ? 1 : 0),
-          }
-          const total = next.desayunos + next.comidas + next.cenas
-          if (total >= 21) {
-            setTimeout(() => { setShowMatch(false); setMenuCompleto(true) }, 2500)
-          } else {
-            setTimeout(() => setShowMatch(false), 2500)
-          }
-          return next
-        })
-      }
+    const totalLikes = likes?.length || 0
 
-      setSwipeIndex((prev) => {
-        for (let i = 1; i < meals.length; i++) {
-          const next = (prev + i) % meals.length
-          const alreadyVoted = (freshVotes ?? []).some(
-            (v) => v.profile_id === userId && v.meal_id === meals[next].id
-          )
-          if (!alreadyVoted) return next
-        }
-        return (prev + 1) % meals.length
-      })
-    } catch {
-      toast.error('No se pudo guardar el voto.')
-    } finally {
-      setSwipingMealId(null)
+    console.log(`Match check: ${totalLikes}/${totalMembers} likes para ${meal.name}`)
+
+    if (totalLikes >= totalMembers) {
+      await handleMatch(meal)
     }
+  }
+
+  const handleMatch = async (meal: Meal) => {
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
+
+    const { data: existing } = await supabase
+      .from('weekly_menu')
+      .select('id')
+      .eq('meal_id', meal.id)
+      .eq('family_id', familyId)
+      .eq('week_number', weekNumber)
+      .eq('year', year)
+      .maybeSingle()
+
+    if (existing) return
+
+    const { data: assignedDays } = await supabase
+      .from('weekly_menu')
+      .select('day_of_week, meals(category)')
+      .eq('family_id', familyId)
+      .eq('week_number', weekNumber)
+      .eq('year', year)
+
+    const daysUsedForCategory = assignedDays
+      ?.filter(a => {
+        const m = Array.isArray(a.meals) ? a.meals[0] : a.meals
+        return (m as { category?: string } | null)?.category === meal.category
+      })
+      .map(a => a.day_of_week) || []
+
+    let nextDay: number | null = null
+    for (let d = 1; d <= 7; d++) {
+      if (!daysUsedForCategory.includes(d)) {
+        nextDay = d
+        break
+      }
+    }
+
+    if (!nextDay) return
+
+    const { error } = await supabase
+      .from('weekly_menu')
+      .insert({
+        family_id: familyId,
+        meal_id: meal.id,
+        day_of_week: nextDay,
+        week_number: weekNumber,
+        year,
+        auto_assigned: true
+      })
+
+    if (!error) {
+      const field = meal.category === 'desayuno'
+        ? 'desayunos_matched'
+        : meal.category === 'comida'
+        ? 'comidas_matched'
+        : 'cenas_matched'
+
+      await supabase.rpc('increment_match_count', {
+        p_family_id: familyId,
+        p_week_number: weekNumber,
+        p_year: year,
+        p_field: field
+      })
+
+      const mealConDia = { ...meal, assignedDay: nextDay }
+      setMatchMeal(mealConDia)
+      setShowMatchAnimation(true)
+
+      setProgress(prev => ({
+        ...prev,
+        [field.replace('_matched', '')]: (prev[field.replace('_matched', '') as keyof VotingProgress] || 0) + 1
+      }))
+    }
+  }
+
+  const handleSwipeVote = async (liked: boolean) => {
+    if (!userId || !familyId) return
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
+    const currentMeal = meals[swipeIndex]
+    if (!currentMeal) return
+
+    const { error: voteError } = await supabase
+      .from('meal_votes')
+      .upsert({
+        profile_id: userId,
+        meal_id: currentMeal.id,
+        family_id: familyId,
+        vote: liked,
+        week_number: weekNumber,
+        year
+      }, {
+        onConflict: 'profile_id,meal_id,week_number,year'
+      })
+
+    if (voteError) {
+      console.error('Error guardando voto:', voteError)
+    }
+
+    if (liked) {
+      await checkForMatch(currentMeal)
+    }
+
+    setSwipeIndex(prev => prev + 1)
   }
 
   const filtered = meals.filter((m) => {
@@ -353,145 +432,152 @@ function ComidasContent() {
         {/* ── MODO SWIPE ──────────────────────────────────── */}
         {modo === 'swipe' && (
           <>
-            {/* Progreso de votación */}
-            {!loading && (
-              <div className="voting-progress-card">
-                <div className="voting-progress-header">
-                  <span className="voting-progress-title">Menú semanal</span>
-                  <span className="voting-progress-count">{totalMatches} / 21 matches</span>
-                </div>
-                <div className="voting-categories">
-                  {([
-                    { label: 'Desayunos', count: progress.desayunos },
-                    { label: 'Comidas',   count: progress.comidas },
-                    { label: 'Cenas',     count: progress.cenas },
-                  ] as const).map(({ label, count }) => (
-                    <div key={label} className="voting-cat-row">
-                      <span className="voting-cat-label">{label}</span>
-                      <div className="voting-cat-dots">
-                        {Array.from({ length: TARGET }).map((_, i) => (
-                          <div
-                            key={i}
-                            className={`voting-dot${i < count ? ' voting-dot-filled' : ''}`}
-                          />
-                        ))}
-                      </div>
-                      <span className="voting-cat-fraction">{count}/{TARGET}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {loading ? (
-              <div className="stack-4"><MealCardSkeleton /></div>
-            ) : meals.length === 0 ? (
-              <EmptyState
-                icon={<Utensils style={{ width: 40, height: 40 }} />}
-                title="Sin comidas para votar"
-                description="Agrega comidas al catálogo primero"
-                action={{ label: 'Agregar comida', onClick: () => window.location.href = '/comidas/nueva' }}
-              />
-            ) : (
-              <div className="swipe-mode-container">
-                <p className="swipe-counter">
-                  {swipeIndex + 1} / {meals.length} comidas
+            {totalMatches >= 21 ? (
+              /* ── MENÚ COMPLETO ── */
+              <div style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '70vh',
+                textAlign: 'center',
+                padding: '0 16px',
+              }}>
+                <div style={{ fontSize: '72px', marginBottom: '16px' }}>🎉</div>
+                <h2 style={{
+                  fontSize: '24px',
+                  fontWeight: 900,
+                  color: 'var(--text)',
+                  marginBottom: '8px',
+                }}>
+                  ¡Menú completo!
+                </h2>
+                <p style={{
+                  fontSize: '14px',
+                  color: 'var(--muted)',
+                  marginBottom: '32px',
+                  lineHeight: 1.6,
+                }}>
+                  Las 21 comidas de la semana están listas.
+                  Ya pueden ver el menú y generar la lista del súper.
                 </p>
-
-                {swipeMeal && (
-                  <SwipeCard
-                    key={`${swipeMeal.id}-${swipeIndex}`}
-                    meal={swipeMeal}
-                    members={members}
-                    swipeVotes={swipeMealVotes}
-                    currentUserId={userId ?? ''}
-                    onLike={(id) => handleSwipeVote(id, true)}
-                    onPass={(id) => handleSwipeVote(id, false)}
-                  />
-                )}
-
-                {currentUserVotedSwipe && (
-                  <p className="swipe-voted-hint">
-                    Ya votaste esta semana — igual puedes deslizar para ver la siguiente
-                  </p>
-                )}
+                <button
+                  className="btn-primary"
+                  onClick={() => router.push('/menu')}
+                >
+                  Ver menú de la semana →
+                </button>
               </div>
+            ) : (
+              <>
+                {/* Progreso de votación */}
+                {!loading && (
+                  <div className="card" style={{ margin: '0 0 4px' }}>
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      marginBottom: '12px',
+                    }}>
+                      <span style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>
+                        Menú semanal
+                      </span>
+                      <span style={{ fontSize: '13px', fontWeight: 700, color: 'var(--amber)' }}>
+                        {totalMatches}/21 matches
+                      </span>
+                    </div>
+
+                    {[
+                      { label: 'Desayunos', matched: progress.desayunos, emoji: '🌅' },
+                      { label: 'Comidas',   matched: progress.comidas,   emoji: '☀️' },
+                      { label: 'Cenas',     matched: progress.cenas,     emoji: '🌙' },
+                    ].map(({ label, matched, emoji }) => (
+                      <div key={label} style={{ marginBottom: '8px' }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          marginBottom: '3px',
+                        }}>
+                          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                            {emoji} {label}
+                          </span>
+                          <span style={{
+                            fontSize: '12px',
+                            color: matched === TARGET ? 'var(--green)' : 'var(--muted)',
+                            fontWeight: 600,
+                          }}>
+                            {matched}/{TARGET}{matched === TARGET ? ' ✓' : ''}
+                          </span>
+                        </div>
+                        <div style={{
+                          height: '6px',
+                          background: 'var(--surface2)',
+                          borderRadius: '3px',
+                          overflow: 'hidden',
+                        }}>
+                          <div style={{
+                            height: '100%',
+                            width: `${(matched / TARGET) * 100}%`,
+                            background: matched === TARGET
+                              ? 'var(--green)'
+                              : 'linear-gradient(90deg, var(--amber), #f97316)',
+                            borderRadius: '3px',
+                            transition: 'width 0.5s ease',
+                          }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {loading ? (
+                  <div className="stack-4"><MealCardSkeleton /></div>
+                ) : meals.length === 0 ? (
+                  <EmptyState
+                    icon={<Utensils style={{ width: 40, height: 40 }} />}
+                    title="Sin comidas para votar"
+                    description="Agrega comidas al catálogo primero"
+                    action={{ label: 'Agregar comida', onClick: () => window.location.href = '/comidas/nueva' }}
+                  />
+                ) : (
+                  <div className="swipe-mode-container">
+                    <p className="swipe-counter">
+                      {swipeIndex + 1} / {meals.length} comidas
+                    </p>
+
+                    {swipeMeal && (
+                      <SwipeCard
+                        key={`${swipeMeal.id}-${swipeIndex}`}
+                        meal={swipeMeal}
+                        members={members}
+                        swipeVotes={swipeMealVotes}
+                        currentUserId={userId ?? ''}
+                        onLike={() => handleSwipeVote(true)}
+                        onPass={() => handleSwipeVote(false)}
+                      />
+                    )}
+
+                    {currentUserVotedSwipe && (
+                      <p className="swipe-voted-hint">
+                        Ya votaste esta semana — igual puedes deslizar para ver la siguiente
+                      </p>
+                    )}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
       </div>
 
-      {/* ── OVERLAY DE MATCH ──────────────────────────────── */}
-      {showMatch && (
-        <div className="match-overlay" onClick={() => setShowMatch(false)}>
-          <div className="match-confetti">
-            {Array.from({ length: 24 }).map((_, i) => (
-              <div
-                key={i}
-                className="confetti-piece"
-                style={{
-                  left: `${(i / 24) * 100}%`,
-                  animationDelay: `${(i % 6) * 0.12}s`,
-                  background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-                  transform: `rotate(${i * 15}deg)`,
-                }}
-              />
-            ))}
-          </div>
-          <div className="match-emoji">🎉</div>
-          <h2 className="match-title">¡Match familiar!</h2>
-          <p className="match-subtitle">
-            <span className="match-meal-name">{matchedMealName}</span>
-          </p>
-          {matchedDay && (
-            <p className="match-day-text">
-              irá el {matchedDay} · {CATEGORY_NAMES[matchedCategory] ?? matchedCategory}
-            </p>
-          )}
-          <p style={{ color: 'var(--hint)', fontSize: '12px', marginTop: '16px' }}>
-            Toca para continuar
-          </p>
-        </div>
-      )}
-
-      {/* ── PANTALLA MENÚ COMPLETO ─────────────────────────── */}
-      {menuCompleto && !showMatch && (
-        <div className="match-overlay" style={{ cursor: 'default' }}>
-          <div className="match-confetti">
-            {Array.from({ length: 30 }).map((_, i) => (
-              <div
-                key={i}
-                className="confetti-piece"
-                style={{
-                  left: `${(i / 30) * 100}%`,
-                  animationDelay: `${(i % 8) * 0.1}s`,
-                  background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
-                  animationDuration: '3s',
-                }}
-              />
-            ))}
-          </div>
-          <div style={{ fontSize: 72, marginBottom: 8 }}>🎊</div>
-          <h2 className="match-title">¡Menú completo!</h2>
-          <p className="match-subtitle" style={{ marginBottom: 8 }}>
-            Las 21 comidas de la semana están listas
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16, width: '100%', maxWidth: 280 }}>
-            <Link
-              href="/menu"
-              className="btn-primary"
-              style={{ textAlign: 'center', padding: '14px 24px', borderRadius: 'var(--r)', textDecoration: 'none', fontSize: 15, fontWeight: 700 }}
-            >
-              Ver mi menú de la semana →
-            </Link>
-            <button
-              onClick={() => setMenuCompleto(false)}
-              style={{ background: 'none', border: 'none', color: 'var(--hint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}
-            >
-              Cerrar
-            </button>
-          </div>
-        </div>
+      {/* ── ANIMACIÓN DE MATCH ──────────────────────────────── */}
+      {showMatchAnimation && matchMeal && (
+        <MatchCelebration
+          meal={matchMeal}
+          onClose={() => {
+            setShowMatchAnimation(false)
+            setMatchMeal(null)
+          }}
+        />
       )}
     </div>
   )
