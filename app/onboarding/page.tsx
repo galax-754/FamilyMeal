@@ -1,34 +1,93 @@
 'use client'
-
-import { useState } from 'react'
-import { Utensils, Crown, Link2, ArrowLeft } from 'lucide-react'
+import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
-type Step = 'elegir' | 'crear' | 'unirse'
+type Step = 'verificando' | 'elegir' | 'crear' | 'unirse'
 
 export default function OnboardingPage() {
-  const [step, setStep]           = useState<Step>('elegir')
-  const [familyName, setFamilyName] = useState('')
-  const [userName, setUserName]   = useState('')
-  const [inviteCode, setInviteCode] = useState('')
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState('')
-
+  const [step, setStep]               = useState<Step>('verificando')
+  const [familyName, setFamilyName]   = useState('')
+  const [userName, setUserName]       = useState('')
+  const [email, setEmail]             = useState('')
+  const [password, setPassword]       = useState('')
+  const [inviteCode, setInviteCode]   = useState('')
+  const [loading, setLoading]         = useState(false)
+  const [error, setError]             = useState('')
   const router = useRouter()
 
+  useEffect(() => {
+    checkStatus()
+  }, [])
+
+  async function checkStatus() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (user) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', user.id)
+        .single()
+
+      if (profile?.family_id) {
+        router.push('/inicio')
+        return
+      }
+    }
+    setStep('elegir')
+  }
+
   async function crearFamilia() {
-    if (!familyName.trim() || !userName.trim()) {
-      setError('Completa todos los campos')
+    if (!userName.trim() || !familyName.trim()) {
+      setError('Completa tu nombre y el nombre de tu familia')
       return
     }
+    if (!email.trim() || !password.trim()) {
+      setError('Completa tu email y contraseña')
+      return
+    }
+    if (password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres')
+      return
+    }
+
     setLoading(true)
     setError('')
 
+    const supabase = createClient()
+
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      let userId: string
+
+      const { data: { user: existingUser } } = await supabase.auth.getUser()
+
+      if (existingUser) {
+        userId = existingUser.id
+      } else {
+        const { data: authData, error: authError } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: { data: { name: userName.trim() } },
+        })
+
+        if (authError) {
+          if (authError.message.includes('already registered')) {
+            const { data: loginData, error: loginError } =
+              await supabase.auth.signInWithPassword({
+                email: email.trim(),
+                password,
+              })
+            if (loginError) throw new Error('Email ya registrado con otra contraseña')
+            userId = loginData.user!.id
+          } else {
+            throw authError
+          }
+        } else {
+          userId = authData.user!.id
+        }
+      }
 
       const { data: family, error: familyError } = await supabase
         .from('families')
@@ -41,16 +100,31 @@ export default function OnboardingPage() {
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
-          id:        user.id,
-          name:      userName.trim(),
+          id: userId,
+          name: userName.trim(),
           family_id: family.id,
-          role:      'admin',
-        })
+          role: 'admin',
+          avatar_color: '#f59e0b',
+        }, { onConflict: 'id' })
 
       if (profileError) throw profileError
 
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+      const code = Array.from({ length: 8 }, () =>
+        chars[Math.floor(Math.random() * chars.length)]
+      ).join('')
+
+      await supabase
+        .from('family_invitations')
+        .insert({
+          family_id: family.id,
+          code,
+          created_by: userId,
+          is_active: true,
+        })
+
       router.push('/preferencias')
-      router.refresh()
+
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Error al crear la familia')
     } finally {
@@ -58,55 +132,115 @@ export default function OnboardingPage() {
     }
   }
 
-  async function unirseAFamilia() {
-    if (!inviteCode.trim() || !userName.trim()) {
-      setError('Completa todos los campos')
+  async function unirseConCodigo() {
+    if (!userName.trim() || !inviteCode.trim()) {
+      setError('Completa tu nombre y el código de invitación')
       return
     }
+    if (!email.trim() || !password.trim()) {
+      setError('Completa tu email y contraseña')
+      return
+    }
+
     setLoading(true)
     setError('')
 
+    const supabase = createClient()
+
     try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      const cleanCode = inviteCode.trim().toUpperCase()
 
-      // Buscar familia por invite_code (igual que la página /unirse)
-      const { data: family } = await supabase
-        .from('families')
-        .select('id, name')
-        .eq('invite_code', inviteCode.trim().toLowerCase())
-        .single()
+      const { data: invitation } = await supabase
+        .from('family_invitations')
+        .select('family_id, is_active, families(name)')
+        .eq('code', cleanCode)
+        .eq('is_active', true)
+        .maybeSingle()
 
-      if (!family) {
-        setError('Código inválido. Pide el link correcto a tu familia.')
+      if (!invitation) {
+        setError('Código inválido. Pide el link correcto al administrador.')
         setLoading(false)
         return
+      }
+
+      let userId: string
+      const { data: { user: existingUser } } = await supabase.auth.getUser()
+
+      if (existingUser) {
+        userId = existingUser.id
+      } else {
+        const { data: authData, error: authError } =
+          await supabase.auth.signUp({
+            email: email.trim(),
+            password,
+            options: { data: { name: userName.trim() } },
+          })
+
+        if (authError) {
+          if (authError.message.includes('already registered')) {
+            const { data: loginData, error: loginError } =
+              await supabase.auth.signInWithPassword({
+                email: email.trim(),
+                password,
+              })
+            if (loginError) throw new Error('Contraseña incorrecta')
+            userId = loginData.user!.id
+          } else {
+            throw authError
+          }
+        } else {
+          userId = authData.user!.id
+        }
       }
 
       const { error: profileError } = await supabase
         .from('profiles')
         .upsert({
-          id:        user.id,
-          name:      userName.trim(),
-          family_id: family.id,
-          role:      'member',
-        })
+          id: userId,
+          name: userName.trim(),
+          family_id: invitation.family_id,
+          role: 'member',
+          avatar_color: getRandomColor(),
+        }, { onConflict: 'id' })
 
       if (profileError) throw profileError
 
+      const { data: current } = await supabase
+        .from('family_invitations')
+        .select('used_count')
+        .eq('code', cleanCode)
+        .single()
+
+      await supabase
+        .from('family_invitations')
+        .update({ used_count: (current?.used_count || 0) + 1 })
+        .eq('code', cleanCode)
+
       router.push('/preferencias')
-      router.refresh()
+
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Error al unirse a la familia')
+      setError(err instanceof Error ? err.message : 'Error al unirse')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleBack = () => {
-    setStep('elegir')
-    setError('')
+  function getRandomColor() {
+    const colors = ['#6366f1', '#ec4899', '#0891b2', '#059669', '#7c3aed']
+    return colors[Math.floor(Math.random() * colors.length)]
+  }
+
+  if (step === 'verificando') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <div style={{ fontSize: '48px' }}>🍽️</div>
+      </div>
+    )
   }
 
   return (
@@ -121,17 +255,10 @@ export default function OnboardingPage() {
     }}>
 
       {/* Logo */}
-      <div style={{ textAlign: 'center', marginBottom: 40 }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%',
-          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          margin: '0 auto 12px',
-        }}>
-          <Utensils style={{ width: 28, height: 28, color: '#000' }} />
-        </div>
+      <div style={{ textAlign: 'center', marginBottom: '32px' }}>
+        <div style={{ fontSize: '52px', marginBottom: '12px' }}>🍽️</div>
         <h1 style={{
-          fontSize: 28,
+          fontSize: '28px',
           fontWeight: 900,
           letterSpacing: '-0.5px',
           background: 'linear-gradient(90deg, #f59e0b, #fde68a)',
@@ -140,184 +267,186 @@ export default function OnboardingPage() {
         }}>
           FamilyMeal
         </h1>
-        <p style={{ color: 'var(--muted)', fontSize: 14, marginTop: 4 }}>
-          Organiza las comidas de tu familia
-        </p>
       </div>
 
-      {/* ── PASO: Elegir ────────────────────────── */}
+      {/* ── ELEGIR ── */}
       {step === 'elegir' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <h2 style={{
-            fontSize: 18,
+            fontSize: '18px',
             fontWeight: 700,
             color: 'var(--text)',
             textAlign: 'center',
-            marginBottom: 8,
+            marginBottom: '8px',
           }}>
             ¿Cómo quieres empezar?
           </h2>
 
           <div
             className="card"
-            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14 }}
-            onClick={() => setStep('crear')}
+            style={{ cursor: 'pointer' }}
+            onClick={() => { setStep('crear'); setError('') }}
           >
-            <div style={{
-              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-              background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Crown style={{ width: 20, height: 20, color: 'var(--amber)' }} />
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>👑</div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
+              Crear mi familia
             </div>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
-                Crear mi familia
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                Soy el administrador. Invitaré a mi familia después.
-              </div>
+            <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
+              Seré el administrador e invitaré a mi familia
             </div>
           </div>
 
           <div
             className="card"
-            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14 }}
-            onClick={() => setStep('unirse')}
+            style={{ cursor: 'pointer' }}
+            onClick={() => { setStep('unirse'); setError('') }}
           >
-            <div style={{
-              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
-              background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-              <Link2 style={{ width: 20, height: 20, color: 'var(--blue)' }} />
+            <div style={{ fontSize: '32px', marginBottom: '8px' }}>🔗</div>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
+              Unirme a una familia
             </div>
-            <div>
-              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
-                Unirme a una familia
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                Tengo un link de invitación de mi familia.
-              </div>
+            <div style={{ fontSize: '13px', color: 'var(--muted)' }}>
+              Tengo un código de invitación
             </div>
           </div>
         </div>
       )}
 
-      {/* ── PASO: Crear familia ─────────────────── */}
+      {/* ── CREAR FAMILIA ── */}
       {step === 'crear' && (
         <div>
           <button
-            onClick={handleBack}
+            onClick={() => { setStep('elegir'); setError('') }}
             style={{
-              background: 'none', border: 'none', color: 'var(--amber)',
-              fontSize: 14, fontWeight: 600, cursor: 'pointer',
-              marginBottom: 20, padding: 0, fontFamily: 'Inter, sans-serif',
-              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'none', border: 'none',
+              color: 'var(--amber)', fontSize: '14px',
+              fontWeight: 600, cursor: 'pointer',
+              marginBottom: '20px', padding: 0,
+              fontFamily: 'Inter, sans-serif',
             }}
           >
-            <ArrowLeft style={{ width: 14, height: 14 }} /> Volver
+            ← Volver
           </button>
 
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', marginBottom: 20 }}>
+          <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', marginBottom: '20px' }}>
             Crear mi familia
           </h2>
 
           <div className="field-group">
             <label className="field-label">Tu nombre</label>
-            <input
-              type="text"
-              className="input"
+            <input type="text" className="input"
               placeholder="Ej: Kareny"
               value={userName}
-              onChange={(e) => setUserName(e.target.value)}
+              onChange={e => setUserName(e.target.value)}
               autoFocus
             />
           </div>
 
-          <div className="field-group" style={{ marginBottom: 24 }}>
+          <div className="field-group">
             <label className="field-label">Nombre de tu familia</label>
-            <input
-              type="text"
-              className="input"
+            <input type="text" className="input"
               placeholder="Ej: Familia Garza"
               value={familyName}
-              onChange={(e) => setFamilyName(e.target.value)}
+              onChange={e => setFamilyName(e.target.value)}
+            />
+          </div>
+
+          <div className="field-group">
+            <label className="field-label">Tu email</label>
+            <input type="email" className="input"
+              placeholder="tu@email.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+
+          <div className="field-group" style={{ marginBottom: '24px' }}>
+            <label className="field-label">Contraseña</label>
+            <input type="password" className="input"
+              placeholder="Mínimo 6 caracteres"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
             />
           </div>
 
           {error && (
-            <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div>
+            <div className="error-banner" style={{ marginBottom: '16px' }}>{error}</div>
           )}
 
-          <button
-            className="btn-primary"
-            onClick={crearFamilia}
-            disabled={loading}
-            style={{ width: '100%' }}
-          >
+          <button className="btn-primary" onClick={crearFamilia} disabled={loading}>
             {loading ? 'Creando familia...' : 'Crear familia →'}
           </button>
         </div>
       )}
 
-      {/* ── PASO: Unirse ────────────────────────── */}
+      {/* ── UNIRSE ── */}
       {step === 'unirse' && (
         <div>
           <button
-            onClick={handleBack}
+            onClick={() => { setStep('elegir'); setError('') }}
             style={{
-              background: 'none', border: 'none', color: 'var(--amber)',
-              fontSize: 14, fontWeight: 600, cursor: 'pointer',
-              marginBottom: 20, padding: 0, fontFamily: 'Inter, sans-serif',
-              display: 'flex', alignItems: 'center', gap: 4,
+              background: 'none', border: 'none',
+              color: 'var(--amber)', fontSize: '14px',
+              fontWeight: 600, cursor: 'pointer',
+              marginBottom: '20px', padding: 0,
+              fontFamily: 'Inter, sans-serif',
             }}
           >
-            <ArrowLeft style={{ width: 14, height: 14 }} /> Volver
+            ← Volver
           </button>
 
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>
+          <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', marginBottom: '8px' }}>
             Unirme a una familia
           </h2>
 
-          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20 }}>
-            Pega el código del link que te mandaron.
-            Es la parte después de <strong style={{ color: 'var(--text)' }}>?codigo=</strong>
+          <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '20px', lineHeight: 1.6 }}>
+            Ingresa el código del link que te compartieron.
+            Es la parte después de &ldquo;?codigo=&rdquo; en el link.
           </p>
 
           <div className="field-group">
             <label className="field-label">Tu nombre</label>
-            <input
-              type="text"
-              className="input"
-              placeholder="Ej: Mamá"
+            <input type="text" className="input"
+              placeholder="Ej: Mamá, Papá..."
               value={userName}
-              onChange={(e) => setUserName(e.target.value)}
+              onChange={e => setUserName(e.target.value)}
               autoFocus
             />
           </div>
 
-          <div className="field-group" style={{ marginBottom: 24 }}>
+          <div className="field-group">
             <label className="field-label">Código de invitación</label>
-            <input
-              type="text"
-              className="input"
-              placeholder="Pega el código aquí"
+            <input type="text" className="input"
+              placeholder="Ej: AB3D7XYZ"
               value={inviteCode}
-              onChange={(e) => setInviteCode(e.target.value)}
+              onChange={e => setInviteCode(e.target.value.toUpperCase())}
+              style={{ textTransform: 'uppercase', letterSpacing: '2px' }}
+            />
+          </div>
+
+          <div className="field-group">
+            <label className="field-label">Tu email</label>
+            <input type="email" className="input"
+              placeholder="tu@email.com"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
+            />
+          </div>
+
+          <div className="field-group" style={{ marginBottom: '24px' }}>
+            <label className="field-label">Contraseña</label>
+            <input type="password" className="input"
+              placeholder="Mínimo 6 caracteres"
+              value={password}
+              onChange={e => setPassword(e.target.value)}
             />
           </div>
 
           {error && (
-            <div className="error-banner" style={{ marginBottom: 16 }}>{error}</div>
+            <div className="error-banner" style={{ marginBottom: '16px' }}>{error}</div>
           )}
 
-          <button
-            className="btn-primary"
-            onClick={unirseAFamilia}
-            disabled={loading}
-            style={{ width: '100%' }}
-          >
+          <button className="btn-primary" onClick={unirseConCodigo} disabled={loading}>
             {loading ? 'Uniéndome...' : 'Unirme a la familia →'}
           </button>
         </div>

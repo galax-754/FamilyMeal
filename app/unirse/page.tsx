@@ -38,12 +38,18 @@ function UnirseContent() {
       setCurrentUserId(user?.id ?? null)
 
       if (codigo) {
-        const { data: fam } = await supabase
-          .from('families')
-          .select('id, name')
-          .eq('invite_code', codigo.trim().toLowerCase())
-          .single()
-        setFamily((fam as FamilyInfo | null))
+        const cleanCode = codigo.trim().toUpperCase()
+        const { data: inv } = await supabase
+          .from('family_invitations')
+          .select('family_id, is_active, families(id, name)')
+          .eq('code', cleanCode)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (inv?.families) {
+          const fam = inv.families as unknown as FamilyInfo
+          setFamily(fam)
+        }
       }
       setLoading(false)
     }
@@ -52,11 +58,24 @@ function UnirseContent() {
 
   const joinFamily = async (userId: string) => {
     if (!family) return
+    const cleanCode = codigo.trim().toUpperCase()
+
     const { error } = await supabase
       .from('profiles')
-      .update({ family_id: family.id, role: 'member' })
-      .eq('id', userId)
+      .upsert({ id: userId, family_id: family.id, role: 'member' }, { onConflict: 'id' })
     if (error) throw error
+
+    const { data: current } = await supabase
+      .from('family_invitations')
+      .select('used_count')
+      .eq('code', cleanCode)
+      .single()
+
+    await supabase
+      .from('family_invitations')
+      .update({ used_count: (current?.used_count || 0) + 1 })
+      .eq('code', cleanCode)
+
     toast.success(`¡Te uniste a ${family.name}!`)
     router.push('/preferencias')
   }
