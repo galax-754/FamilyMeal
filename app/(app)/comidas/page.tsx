@@ -69,7 +69,11 @@ function ComidasContent() {
     setError(false)
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) {
+        console.log('comidas: sin usuario autenticado')
+        setLoading(false)
+        return
+      }
       setUserId(user.id)
 
       const { data: prof } = await supabase
@@ -78,8 +82,13 @@ function ComidasContent() {
         .eq('id', user.id)
         .single()
 
-      if (!prof?.family_id) return
+      if (!prof?.family_id) {
+        console.log('comidas: perfil sin family_id', prof)
+        setLoading(false)
+        return
+      }
       setFamilyId(prof.family_id)
+      console.log('comidas: familyId =', prof.family_id)
 
       const semana = getWeekNumber(new Date())
       const anio = new Date().getFullYear()
@@ -114,15 +123,20 @@ function ComidasContent() {
           .eq('week_start', weekStart),
       ])
 
+      console.log('comidas: meals encontradas =', data?.length, '| error =', err)
       if (err) throw err
 
       const scored = (data ?? []).map((m) => ({
         ...m,
+        // Normalizar categoría a minúscula para que los filtros funcionen
+        // independientemente de si Claude devolvió 'Desayuno' o 'desayuno'
+        category: (m.category?.toLowerCase() ?? 'comida') as MealCategory,
         vote_score: (m.meal_votes as Array<{ vote: number }>).reduce((s: number, v) => s + v.vote, 0),
         my_vote: (m.meal_votes as Array<{ profile_id: string; vote: -1 | 0 | 1 }>)
           .find((v) => v.profile_id === user.id)?.vote ?? null,
       }))
 
+      console.log('comidas: categorías =', scored.map(m => m.category))
       setMeals(scored)
       setMembers(mems ?? [])
       setSwipeVotes((votes ?? []) as SwipeVote[])
