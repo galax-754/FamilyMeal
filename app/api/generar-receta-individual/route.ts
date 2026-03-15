@@ -11,6 +11,8 @@ interface IngredientItem {
   unit: string
 }
 
+export const maxDuration = 60
+
 export async function POST(req: NextRequest) {
   const {
     meal_name,
@@ -48,19 +50,46 @@ Responde SOLO con JSON válido sin bloques de código:
 
   try {
     const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     })
 
-    const text =
+    const responseText =
       message.content[0].type === 'text' ? message.content[0].text : ''
 
-    const clean = text.replace(/```json/g, '').replace(/```/g, '').trim()
+    if (!responseText || responseText.trim() === '') {
+      console.error('Claude devolvió respuesta vacía en generar-receta-individual')
+      return NextResponse.json(
+        { error: 'Claude no generó respuesta' },
+        { status: 500 }
+      )
+    }
+
+    let clean = responseText
+      .replace(/```json/gi, '')
+      .replace(/```/g, '')
+      .trim()
+
+    const firstBrace = clean.indexOf('{')
+    const lastBrace = clean.lastIndexOf('}')
+
+    if (firstBrace === -1 || lastBrace === -1) {
+      console.error('No se encontró JSON en la respuesta de generar-receta-individual')
+      console.error('Respuesta raw (primeros 500 chars):', responseText.substring(0, 500))
+      return NextResponse.json(
+        { error: 'Error procesando respuesta de IA' },
+        { status: 500 }
+      )
+    }
+
+    clean = clean.substring(firstBrace, lastBrace + 1)
     const recipe = JSON.parse(clean)
 
     return NextResponse.json({ success: true, recipe })
-  } catch {
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : String(error)
+    console.error('Error generando receta individual:', msg)
     return NextResponse.json(
       { error: 'Error generando receta' },
       { status: 500 }
