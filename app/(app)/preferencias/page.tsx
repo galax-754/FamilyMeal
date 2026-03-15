@@ -77,24 +77,38 @@ export default function PreferenciasPage() {
       const weekNumber = getWeekNumber(new Date())
       const year = new Date().getFullYear()
 
-      const { error } = await supabase
+      const payload = {
+        likes,
+        dislikes,
+        allergies,
+        is_diabetic: isDiabetic,
+        is_vegetarian: isVegetarian,
+        is_vegan: isVegan,
+        preferences_completed: true,
+        week_number: weekNumber,
+        year,
+        completed_at: new Date().toISOString(),
+      }
+
+      const { data: existing } = await supabase
         .from('user_preferences')
-        .upsert({
-          profile_id: profileId,
-          family_id: familyId,
-          likes,
-          dislikes,
-          allergies,
-          is_diabetic: isDiabetic,
-          is_vegetarian: isVegetarian,
-          is_vegan: isVegan,
-          preferences_completed: true,
-          week_number: weekNumber,
-          year,
-          completed_at: new Date().toISOString()
-        }, {
-          onConflict: 'profile_id,week_number,year'
-        })
+        .select('id')
+        .eq('profile_id', profileId)
+        .maybeSingle()
+
+      let error
+      if (existing) {
+        const { error: updateError } = await supabase
+          .from('user_preferences')
+          .update(payload)
+          .eq('id', existing.id)
+        error = updateError
+      } else {
+        const { error: insertError } = await supabase
+          .from('user_preferences')
+          .insert({ profile_id: profileId, family_id: familyId, ...payload })
+        error = insertError
+      }
 
       if (error) throw error
 

@@ -62,6 +62,7 @@ export default function FamiliaPage() {
   const [menuProgress, setMenuProgress] = useState<MenuProgress | null>(null)
   const [matchMode, setMatchMode] = useState<string>('full')
   const [actionLoading, setActionLoading] = useState(false)
+  const [memberPrefsStatus, setMemberPrefsStatus] = useState<Record<string, boolean>>({})
 
   const toast = useToast()
   const router = useRouter()
@@ -118,7 +119,26 @@ export default function FamiliaPage() {
           .maybeSingle(),
       ])
 
-      setMembers((membersData ?? []) as MemberData[])
+      const membersList = (membersData ?? []) as MemberData[]
+      setMembers(membersList)
+
+      // Verificar preferencias completadas de cada miembro (sin filtro de semana)
+      const prefsResults = await Promise.all(
+        membersList.map((m) =>
+          supabase
+            .from('user_preferences')
+            .select('id')
+            .eq('profile_id', m.id)
+            .eq('preferences_completed', true)
+            .limit(1)
+            .maybeSingle()
+        )
+      )
+      const statusMap: Record<string, boolean> = {}
+      membersList.forEach((m, i) => {
+        statusMap[m.id] = !!prefsResults[i].data
+      })
+      setMemberPrefsStatus(statusMap)
 
       // Conteos directamente del weekly_menu (fuente de verdad)
       const entries = weeklyMenuData ?? []
@@ -438,6 +458,17 @@ export default function FamiliaPage() {
                       <span className="member-you">(Tú)</span>
                     )}
                   </p>
+                  <span style={{
+                    fontSize: '11px',
+                    fontWeight: 600,
+                    color: memberPrefsStatus[member.id]
+                      ? 'var(--green)'
+                      : 'var(--amber)',
+                  }}>
+                    {memberPrefsStatus[member.id]
+                      ? '✓ Preferencias listas'
+                      : '⏳ Preferencias pendientes'}
+                  </span>
                 </div>
                 <span className={roleBadgeClass[member.role] ?? 'role-badge'}>
                   {roleLabels[member.role]}

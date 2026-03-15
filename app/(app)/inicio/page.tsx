@@ -141,8 +141,9 @@ export default function InicioPage() {
           .from('user_preferences')
           .select('preferences_completed, notified_at')
           .eq('profile_id', user.id)
-          .eq('week_number', semana)
-          .eq('year', anio)
+          .eq('preferences_completed', true)
+          .order('created_at', { ascending: false })
+          .limit(1)
           .maybeSingle(),
         supabase
           .from('weekly_voting_status')
@@ -190,8 +191,15 @@ export default function InicioPage() {
       // ── Determinar estado del flujo ──────────────────
       // Admin siempre ve el dashboard normal
       if (prof.role === 'admin') {
-        // Si no tiene preferencias completadas esta semana, redirigir a llenarlas
-        if (!prefs?.preferences_completed) {
+        const { data: anyCompletedPrefs } = await supabase
+          .from('user_preferences')
+          .select('id')
+          .eq('profile_id', user.id)
+          .eq('preferences_completed', true)
+          .limit(1)
+          .maybeSingle()
+
+        if (!anyCompletedPrefs) {
           router.push('/preferencias')
           return
         }
