@@ -4,7 +4,7 @@ export const maxDuration = 60
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
-import { searchFoodImage, buildSearchQuery } from '@/lib/images'
+import { searchFoodImage } from '@/lib/images'
 import { CLAUDE_API_KEY } from '@/config'
 
 const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY })
@@ -17,12 +17,9 @@ function getWeekNumber(date: Date): number {
   return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
 }
 
-function parseClaudeJSON(responseText: string): { recetas: unknown[] } {
-  if (!responseText || responseText.trim() === '') {
-    throw new Error('Claude devolvió respuesta vacía')
-  }
-
-  let clean = responseText
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseRecetaJSON(text: string): any {
+  const clean = text
     .replace(/```json/gi, '')
     .replace(/```/g, '')
     .trim()
@@ -34,8 +31,7 @@ function parseClaudeJSON(responseText: string): { recetas: unknown[] } {
     throw new Error('No se encontró JSON en la respuesta')
   }
 
-  clean = clean.substring(firstBrace, lastBrace + 1)
-  return JSON.parse(clean)
+  return JSON.parse(clean.substring(firstBrace, lastBrace + 1))
 }
 
 export async function POST(request: NextRequest) {
@@ -46,6 +42,8 @@ export async function POST(request: NextRequest) {
     if (!family_id) {
       return NextResponse.json({ error: 'family_id requerido' }, { status: 400 })
     }
+
+    console.log('Family ID recibido:', family_id)
 
     const supabase = await createClient()
 
@@ -88,7 +86,7 @@ export async function POST(request: NextRequest) {
         .single(),
     ])
 
-    // Agregar preferencias de todos los miembros
+    // Consolidar preferencias de todos los miembros
     const allLikes     = new Set<string>()
     const allDislikes  = new Set<string>()
     const allAllergies = new Set<string>()
@@ -101,133 +99,142 @@ export async function POST(request: NextRequest) {
       if (pref.is_diabetic) hasDiabetic = true
     }
 
-    const budgetWeekly = (familyData?.budget_weekly as number | null) ?? 0
+    const likesArray    = Array.from(allLikes)
+    const dislikesArray = Array.from(allDislikes)
+    const recentMeals   = (existingMeals ?? []).map((m) => m.name)
+    const weekNumber    = getWeekNumber(new Date())
+    const budgetWeekly  = (familyData?.budget_weekly as number | null) ?? 2500
+    const budgetPerMeal = Math.round(budgetWeekly / 21) // 3 comidas × 7 días
 
-    const recentMeals = (existingMeals ?? []).map((m) => m.name)
-    const weekNumber  = getWeekNumber(new Date())
+    // 3 llamadas separadas — 1 receta por categoría para evitar JSON truncado
+    const categorias = ['Desayuno', 'Comida', 'Cena']
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const todasLasRecetas: any[] = []
 
-    // Una sola llamada: 3 recetas (1 desayuno, 1 comida, 1 cena)
-    const prompt = `Eres chef profesional especializado en nutrición.
-Genera exactamente 3 recetas: 1 Desayuno, 1 Comida, 1 Cena.
+    for (const categoria of categorias) {
+      const prompt = `Eres chef profesional mexicano con 20 años de experiencia.
+Genera EXACTAMENTE 1 receta de ${categoria} para 4 personas.
+Alto en proteína (mínimo 30g por porción).
+Presupuesto: $${budgetPerMeal} MXN por platillo.
+${hasDiabetic ? 'OBLIGATORIO: apta para diabéticos, bajo índice glucémico.' : ''}
+Variedad: mexicana, italiana, mediterránea, asiática o americana.
+Les gusta: ${likesArray.slice(0, 6).join(', ') || 'variado'}.
+Evitar: ${dislikesArray.slice(0, 3).join(', ') || 'nada'}.
+Alergias: ${Array.from(allAllergies).join(', ') || 'ninguna'}.
+No repetir: ${recentMeals.slice(0, 3).join(', ') || 'nada'}.
 
-FAMILIA:
-- Usa ingredientes económicos disponibles en HEB México. La familia tiene $${budgetWeekly > 0 ? budgetWeekly : 2500} MXN semanales para todas las comidas.
-- Les gusta: ${Array.from(allLikes).slice(0, 8).join(', ') || 'variado'}
-- No les gusta: ${Array.from(allDislikes).slice(0, 5).join(', ') || 'ninguno'}
-- Alergias: ${Array.from(allAllergies).join(', ') || 'ninguna'}
-- No repetir: ${recentMeals.slice(0, 5).join(', ') || 'ninguna'}
+ESTILO DE INSTRUCCIONES:
+- Usa lenguaje simple y cotidiano, NO términos técnicos ni en francés
+- En vez de "sellar la proteína" → "dora el pollo a fuego alto hasta que esté café por fuera"
+- En vez de "desglasar" → "agrega el vino y raspa el fondo del sartén con una cuchara"
+- En vez de "brunoise" → "pica muy finito en cubitos pequeños"
+- En vez de "sofreír" → "cocina en aceite a fuego medio moviendo de vez en cuando"
+- Cada paso debe explicar POR QUÉ se hace, no solo el QUÉ. Ejemplo: "Seca bien el pollo con papel (esto hace que dore mejor y no se cueza al vapor)"
+- Temperaturas en términos prácticos: "fuego bajo", "fuego medio", "fuego alto" o "horno a 180°C (temperatura normal del horno)"
+- Tiempos claros: "unos 3-4 minutos", nunca "reducir a glaze" ni términos ambiguos
 
-TIPO DE RECETAS:
-- Variedad internacional: mexicana, italiana, mediterránea, asiática, americana
-- Priorizar recetas ALTAS EN PROTEÍNA:
-  * Carnes magras (pollo, res, atún, salmón)
-  * Huevo en desayunos
-  * Leguminosas (lentejas, garbanzos, frijoles)
-  * Lácteos (queso, yogur griego)
-- Cada receta debe tener mínimo 25-30g de proteína por porción de 4 personas
-- Comidas balanceadas: proteína + verduras + carbohidrato complejo cuando aplique
-- Evitar comida chatarra, frituras excesivas y azúcares añadidos
-${hasDiabetic ? '- Bajo índice glucémico obligatorio' : ''}
-
-DISTRIBUCIÓN SUGERIDA:
-- Desayuno: alto en proteína (huevo, avena proteica, yogur griego, quesadillas de pollo)
-- Comida: proteína principal + verduras + carbohidrato (pollo, res, pescado, leguminosas)
-- Cena: proteína ligera + verduras (ensaladas con pollo, sopas proteicas, pescado)
-
-Responde SOLO con JSON sin texto adicional:
+RESPONDE SOLO con este JSON sin texto adicional:
 {
-  "recetas": [
-    {
-      "name": "Nombre",
-      "description": "Una oración apetitosa",
-      "category": "desayuno",
-      "emoji": "🍳",
-      "estimated_cost": 120,
-      "prep_time_minutes": 20,
-      "is_diabetic_friendly": false,
-      "difficulty": "fácil",
-      "ingredients": [
-        {"name": "ingrediente", "quantity": 1, "unit": "pieza", "estimated_price_mxn": 20}
-      ],
-      "instructions": [
-        {"step": 1, "title": "Título", "text": "Instrucción clara"}
-      ],
-      "chef_tip": "Tip profesional breve",
-      "tags": ["mexicano"]
-    }
-  ]
+  "name": "Nombre específico del platillo",
+  "description": "2 oraciones apetitosas que hagan agua la boca",
+  "category": "${categoria.toLowerCase()}",
+  "emoji": "🍳",
+  "estimated_cost": ${budgetPerMeal},
+  "prep_time_minutes": 30,
+  "is_diabetic_friendly": ${hasDiabetic},
+  "difficulty": "fácil",
+  "ingredients": [
+    {"name": "ingrediente", "quantity": 200, "unit": "g", "estimated_price_mxn": 25}
+  ],
+  "instructions": [
+    {"step": 1, "title": "Título técnico", "text": "Instrucción con temperatura y tiempo exacto"}
+  ],
+  "chef_tip": "Tip técnico específico que mejore el resultado",
+  "tags": ["tag1", "tag2"]
 }`
 
-    const message = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 3000,
-      messages: [{ role: 'user', content: prompt }],
-    })
+      try {
+        const message = await anthropic.messages.create({
+          model:      'claude-haiku-4-5-20251001',
+          max_tokens: 1500,
+          messages:   [{ role: 'user', content: prompt }],
+        })
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
-
-    if (!responseText || responseText.trim() === '') {
-      console.error('Claude devolvió respuesta vacía en generar-recetas')
-      return NextResponse.json({ error: 'Claude no generó respuesta' }, { status: 500 })
+        const text = message.content[0].type === 'text' ? message.content[0].text : ''
+        const receta = parseRecetaJSON(text)
+        todasLasRecetas.push(receta)
+        console.log('✅ Receta generada:', receta.name)
+      } catch (err) {
+        console.error(`❌ Error generando receta de ${categoria}:`, err)
+        // Continuar con las demás categorías aunque una falle
+      }
     }
 
-    let parsed: { recetas: unknown[] }
-    try {
-      parsed = parseClaudeJSON(responseText)
-    } catch (parseError: unknown) {
-      const msg = parseError instanceof Error ? parseError.message : String(parseError)
-      console.error('Error parseando JSON:', msg)
-      console.error('Respuesta raw (primeros 500 chars):', responseText.substring(0, 500))
-      return NextResponse.json(
-        { error: 'Error procesando respuesta de IA: ' + msg },
-        { status: 500 }
-      )
+    console.log('Recetas generadas por Claude:', todasLasRecetas.length)
+
+    if (todasLasRecetas.length === 0) {
+      return NextResponse.json({ error: 'No se pudieron generar recetas' }, { status: 500 })
     }
 
-    if (!parsed.recetas || !Array.isArray(parsed.recetas)) {
-      return NextResponse.json({ error: 'Formato de respuesta inválido' }, { status: 500 })
-    }
-
-    // Buscar imágenes en Unsplash en paralelo
-    const imagePromises = parsed.recetas.map((receta) =>
-      searchFoodImage(
-        (receta as { name: string; category: string }).name,
-        (receta as { name: string; category: string }).category,
-      )
+    // Buscar imágenes en paralelo
+    const images = await Promise.all(
+      todasLasRecetas.map((r) => searchFoodImage(r.name, r.category))
     )
-    const images = await Promise.all(imagePromises)
 
-    // Guardar recetas
+    // Normalizar categorías al formato que acepta el CHECK constraint de la BD
+    const categoryMap: Record<string, string> = {
+      desayuno:  'Desayuno',
+      comida:    'Comida',
+      cena:      'Cena',
+      snack:     'Snack',
+      almuerzo:  'Comida',
+      lunch:     'Comida',
+      dinner:    'Cena',
+      breakfast: 'Desayuno',
+      Desayuno:  'Desayuno',
+      Comida:    'Comida',
+      Cena:      'Cena',
+      Snack:     'Snack',
+    }
+
     const savedMeals = []
 
-    for (let i = 0; i < parsed.recetas.length; i++) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const receta   = parsed.recetas[i] as any
+    for (let i = 0; i < todasLasRecetas.length; i++) {
+      const receta   = todasLasRecetas[i]
       const imageUrl = images[i]
+
+      const normalizedCategory =
+        categoryMap[receta.category] ||
+        categoryMap[receta.category?.toLowerCase()] ||
+        'Comida'
+
+      console.log('Categoría original:', receta.category)
+      console.log('Categoría normalizada:', normalizedCategory)
 
       const { data: meal, error: mealError } = await supabase
         .from('meals')
         .insert({
           name:                 receta.name,
           description:          receta.description,
-          category:             receta.category,
-          meal_emoji:           receta.emoji,
-          estimated_cost:       receta.estimated_cost,
-          prep_time_minutes:    receta.prep_time_minutes,
+          category:             normalizedCategory,
+          meal_emoji:           receta.emoji            || '🍽️',
+          estimated_cost:       receta.estimated_cost   || 0,
+          prep_time_minutes:    receta.prep_time_minutes || 30,
           is_diabetic_friendly: receta.is_diabetic_friendly ?? false,
           is_healthy:           true,
-          difficulty:           receta.difficulty,
-          ingredients:          receta.ingredients,
-          instructions:         receta.instructions,
-          chef_tip:             receta.chef_tip,
-          tags:                 receta.tags,
-          image_url:            imageUrl,
-          image_search_query:   buildSearchQuery(receta.name, receta.category),
+          difficulty:           receta.difficulty       || 'fácil',
+          ingredients:          receta.ingredients      || [],
+          instructions:         receta.instructions     || [],
+          chef_tip:             receta.chef_tip         || '',
+          tags:                 receta.tags             || [],
+          image_url:            imageUrl                || null,
           generated_by_ai:      true,
           family_id,
         })
         .select()
         .single()
+
+      console.log('Insert result:', meal?.id, 'Error:', JSON.stringify(mealError))
 
       if (!mealError && meal) {
         savedMeals.push(meal)
