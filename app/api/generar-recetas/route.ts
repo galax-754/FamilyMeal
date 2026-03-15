@@ -135,16 +135,14 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto adicional:
         savedMeals.push(meal)
 
         // Registrar en historial (no crítico — falla silenciosamente si la tabla no existe)
-        await supabase
-          .from('generated_meals_history')
-          .insert({
+        await Promise.resolve(
+          supabase.from('generated_meals_history').insert({
             family_id,
             meal_name: receta.name,
             week_number: weekNumber,
             year: new Date().getFullYear(),
           })
-          .then(() => null)
-          .catch(() => null)
+        ).catch(() => null)
       }
     }
 
