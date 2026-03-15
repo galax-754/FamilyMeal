@@ -1,13 +1,35 @@
 import { createServerClient } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
 import { SUPABASE_URL, SUPABASE_ANON } from './config'
 
-const APP_ROUTES        = ['/inicio', '/comidas', '/menu', '/tareas', '/familia', '/preferencias']
-const AUTH_ROUTES       = ['/login', '/registrar']
-const ONBOARDING_EXEMPT = ['/onboarding', '/unirse', '/api']
-
 export async function middleware(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({ request })
+  const { pathname } = request.nextUrl
+
+  // Rutas completamente públicas — NO redirigir nunca
+  const publicPaths = [
+    '/login',
+    '/registro',
+    '/registrar',
+    '/unirse',      // página de invitación: debe ser accesible sin auth
+    '/onboarding',
+    '/api/',
+    '/_next/',
+    '/favicon',
+    '/fonts/',
+    '/images/',
+  ]
+
+  const isPublicPath = publicPaths.some(path => pathname.startsWith(path))
+
+  if (isPublicPath) {
+    return NextResponse.next()
+  }
+
+  // Para rutas protegidas verificar sesión
+  let response = NextResponse.next({
+    request: { headers: request.headers },
+  })
 
   const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
     cookies: {
@@ -15,10 +37,14 @@ export async function middleware(request: NextRequest) {
         return request.cookies.getAll()
       },
       setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-        supabaseResponse = NextResponse.next({ request })
+        cookiesToSet.forEach(({ name, value }) =>
+          request.cookies.set(name, value)
+        )
+        response = NextResponse.next({
+          request: { headers: request.headers },
+        })
         cookiesToSet.forEach(({ name, value, options }) =>
-          supabaseResponse.cookies.set(name, value, options)
+          response.cookies.set(name, value, options)
         )
       },
     },
@@ -26,46 +52,30 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const { pathname } = request.nextUrl
-
-  const isAppRoute  = APP_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'))
-  const isAuthRoute = AUTH_ROUTES.some((r) => pathname === r || pathname.startsWith(r + '/'))
-  const isExempt    = ONBOARDING_EXEMPT.some((p) => pathname.startsWith(p))
-
-  const isOnboardingPath = pathname.startsWith('/onboarding')
-
-  // Redirigir a login si no autenticado en ruta protegida o en onboarding
-  if (!user && (isAppRoute || isOnboardingPath)) {
-    return NextResponse.redirect(new URL('/login', request.url))
+  // Sin sesión en ruta protegida → login
+  if (!user) {
+    const loginUrl = new URL('/login', request.url)
+    return NextResponse.redirect(loginUrl)
   }
 
-  // Redirigir a inicio si ya autenticado en rutas de auth
-  if (user && isAuthRoute) {
-    return NextResponse.redirect(new URL('/inicio', request.url))
-  }
-
-  // Verificar familia para rutas protegidas y onboarding
-  if (user && (isAppRoute || isOnboardingPath) && !isExempt) {
+  // Con sesión pero sin familia → onboarding (excepto si ya está ahí)
+  if (pathname !== '/onboarding') {
     const { data: profile } = await supabase
       .from('profiles')
       .select('family_id')
       .eq('id', user.id)
       .single()
 
-    // Sin familia: redirigir a onboarding (excepto si ya está ahí)
-    if (!profile?.family_id && !isOnboardingPath) {
+    if (!profile?.family_id) {
       return NextResponse.redirect(new URL('/onboarding', request.url))
-    }
-
-    // Con familia: si está en onboarding, redirigir a inicio
-    if (profile?.family_id && isOnboardingPath) {
-      return NextResponse.redirect(new URL('/inicio', request.url))
     }
   }
 
-  return supabaseResponse
+  return response
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|api/).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon\\.ico|manifest\\.json|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+  ],
 }

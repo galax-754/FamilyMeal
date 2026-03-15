@@ -3,143 +3,164 @@
 import { Suspense, useState, useEffect } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Users, ArrowRight, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/Button'
-import { useToast } from '@/components/ui/Toast'
+import { Users, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 
-interface FamilyInfo {
-  id: string
-  name: string
-}
+type Step = 'verificando' | 'error' | 'registro'
 
 function UnirseContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const toast = useToast()
-  const supabase = createClient()
 
   const codigo = searchParams.get('codigo') ?? ''
 
-  const [loading, setLoading] = useState(true)
-  const [family, setFamily] = useState<FamilyInfo | null>(null)
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
-  const [joining, setJoining] = useState(false)
-  const [mode, setMode] = useState<'register' | 'login'>('register')
+  const [step, setStep]           = useState<Step>('verificando')
+  const [familyName, setFamilyName] = useState('')
+  const [familyId, setFamilyId]   = useState('')
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState('')
+  const [mode, setMode]           = useState<'register' | 'login'>('register')
 
-  // Campos del form
   const [nombre, setNombre]     = useState('')
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      setCurrentUserId(user?.id ?? null)
-
-      if (codigo) {
-        const cleanCode = codigo.trim().toUpperCase()
-        const { data: inv } = await supabase
-          .from('family_invitations')
-          .select('family_id, is_active, families(id, name)')
-          .ilike('code', cleanCode)
-          .eq('is_active', true)
-          .maybeSingle()
-
-        if (inv?.families) {
-          const fam = inv.families as unknown as FamilyInfo
-          setFamily(fam)
-        }
-      }
-      setLoading(false)
+    if (codigo) {
+      validarCodigo(codigo)
+    } else {
+      setStep('error')
     }
-    init()
   }, [codigo])
 
-  const joinFamily = async (userId: string) => {
-    if (!family) return
-    const cleanCode = codigo.trim().toUpperCase()
+  async function validarCodigo(code: string) {
+    const supabase = createClient()
+    const cleanCode = code.trim().toUpperCase()
+
+    try {
+      const { data: invitation, error: invError } = await supabase
+        .from('family_invitations')
+        .select(`
+          family_id,
+          is_active,
+          code,
+          families (
+            id,
+            name
+          )
+        `)
+        .ilike('code', cleanCode)
+        .maybeSingle()
+
+      if (invError) {
+        console.error('[unirse] Error Supabase:', invError)
+        setStep('error')
+        return
+      }
+
+      if (!invitation || !invitation.is_active) {
+        setStep('error')
+        return
+      }
+
+      const family = Array.isArray(invitation.families)
+        ? invitation.families[0]
+        : invitation.families
+
+      setFamilyName((family as { name: string } | null)?.name || 'tu familia')
+      setFamilyId(invitation.family_id)
+
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user) {
+        await unirseDirecto(user.id, invitation.family_id, cleanCode)
+      } else {
+        setStep('registro')
+      }
+    } catch (err) {
+      console.error('[unirse] Error inesperado:', err)
+      setStep('error')
+    }
+  }
+
+  async function unirseDirecto(userId: string, famId: string, code: string) {
+    const supabase = createClient()
+    const cleanCode = code.trim().toUpperCase()
 
     const { error } = await supabase
       .from('profiles')
-      .upsert({ id: userId, family_id: family.id, role: 'member' }, { onConflict: 'id' })
-    if (error) throw error
+      .upsert({ id: userId, family_id: famId, role: 'member' }, { onConflict: 'id' })
 
-    const { data: current } = await supabase
-      .from('family_invitations')
-      .select('used_count')
-      .ilike('code', cleanCode)
-      .single()
+    if (!error) {
+      const { data: current } = await supabase
+        .from('family_invitations')
+        .select('used_count')
+        .ilike('code', cleanCode)
+        .single()
 
-    await supabase
-      .from('family_invitations')
-      .update({ used_count: (current?.used_count || 0) + 1 })
-      .ilike('code', cleanCode)
+      await supabase
+        .from('family_invitations')
+        .update({ used_count: (current?.used_count || 0) + 1 })
+        .ilike('code', cleanCode)
 
-    toast.success(`¡Te uniste a ${family.name}!`)
-    router.push('/preferencias')
+      router.push('/preferencias')
+    }
   }
 
-  const handleRegister = async () => {
-    if (!nombre.trim() || !email.trim() || password.length < 6) return
-    setJoining(true)
+  async function handleRegister() {
+    if (!nombre.trim() || !email.trim() || password.length < 6) {
+      setError('Completa todos los campos (contraseña mínimo 6 caracteres)')
+      return
+    }
+    setLoading(true)
+    setError('')
+    const supabase = createClient()
     try {
-      const { data, error } = await supabase.auth.signUp({
+      const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: { data: { name: nombre.trim() } },
       })
-      if (error) throw error
+      if (authError) throw authError
       if (data.user) {
-        // Dar tiempo al trigger de perfil
-        await new Promise((r) => setTimeout(r, 1200))
-        await joinFamily(data.user.id)
+        await unirseDirecto(data.user.id, familyId, codigo)
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Algo salió mal. Intenta de nuevo.'
-      toast.error(msg)
+      setError(err instanceof Error ? err.message : 'Algo salió mal')
     } finally {
-      setJoining(false)
+      setLoading(false)
     }
   }
 
-  const handleLogin = async () => {
-    if (!email.trim() || !password) return
-    setJoining(true)
+  async function handleLogin() {
+    if (!email.trim() || !password) {
+      setError('Completa el email y la contraseña')
+      return
+    }
+    setLoading(true)
+    setError('')
+    const supabase = createClient()
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       })
-      if (error) throw error
-      if (data.user) await joinFamily(data.user.id)
+      if (authError) throw authError
+      if (data.user) await unirseDirecto(data.user.id, familyId, codigo)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Credenciales inválidas.'
-      toast.error(msg)
+      setError(err instanceof Error ? err.message : 'Credenciales inválidas')
     } finally {
-      setJoining(false)
+      setLoading(false)
     }
   }
 
-  const handleJoinLoggedIn = async () => {
-    if (!currentUserId) return
-    setJoining(true)
-    try {
-      await joinFamily(currentUserId)
-    } catch {
-      toast.error('Algo salió mal. Intenta de nuevo.')
-    } finally {
-      setJoining(false)
-    }
-  }
-
-  if (loading) {
+  // ── Verificando ──
+  if (step === 'verificando') {
     return (
       <div className="auth-page">
         <div className="auth-logo">
           <span className="auth-logo-icon">🍽️</span>
           <h1 className="auth-logo-title">FamilyMeal</h1>
-          <p className="auth-logo-subtitle">Cargando...</p>
+          <p className="auth-logo-subtitle">Validando invitación...</p>
         </div>
         <div className="auth-card" style={{ display: 'flex', justifyContent: 'center', padding: 32 }}>
           <Loader2 style={{ width: 28, height: 28, color: 'var(--amber)', animation: 'spin 1s linear infinite' }} />
@@ -148,7 +169,8 @@ function UnirseContent() {
     )
   }
 
-  if (!family) {
+  // ── Error ──
+  if (step === 'error') {
     return (
       <div className="auth-page">
         <div className="auth-logo">
@@ -179,152 +201,119 @@ function UnirseContent() {
     )
   }
 
+  // ── Registro / Login ──
   return (
     <div className="auth-page">
-      {/* Banner de familia */}
       <div className="auth-logo">
-        <span className="auth-logo-icon"><Users style={{ width: 40, height: 40 }} /></span>
+        <span className="auth-logo-icon">
+          <Users style={{ width: 40, height: 40 }} />
+        </span>
         <h1 className="auth-logo-title">¡Te invitaron!</h1>
         <p className="auth-logo-subtitle">
           Únete a{' '}
-          <strong style={{ color: 'var(--amber)' }}>{family.name}</strong>
+          <strong style={{ color: 'var(--amber)' }}>{familyName}</strong>
           {' '}en FamilyMeal
         </p>
       </div>
 
       <div className="auth-card">
-        {/* Usuario YA autenticado */}
-        {currentUserId ? (
-          <div className="stack-3">
-            <p style={{ fontSize: 14, color: 'var(--muted)', textAlign: 'center' }}>
-              Serás miembro de <strong style={{ color: 'var(--text)' }}>{family.name}</strong>
-            </p>
-            <Button
-              fullWidth
-              onClick={handleJoinLoggedIn}
-              loading={joining}
-              icon={<ArrowRight style={{ width: 18, height: 18 }} />}
+        {mode === 'register' ? (
+          <div className="stack-4">
+            <div>
+              <h2 className="auth-title">Crear cuenta y unirme</h2>
+              <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+                Crea tu cuenta para unirte a la familia
+              </p>
+            </div>
+
+            <div className="form-field">
+              <label className="form-label">Tu nombre</label>
+              <input
+                type="text" value={nombre} className="input" autoFocus
+                placeholder="Ej. María"
+                onChange={e => setNombre(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">Correo electrónico</label>
+              <input
+                type="email" value={email} className="input"
+                placeholder="tu@correo.com"
+                onChange={e => setEmail(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">Contraseña</label>
+              <input
+                type="password" value={password} className="input"
+                placeholder="Mínimo 6 caracteres"
+                onChange={e => setPassword(e.target.value)}
+              />
+            </div>
+
+            {error && <p style={{ color: 'var(--red, #ef4444)', fontSize: 13 }}>{error}</p>}
+
+            <button
+              className="btn-primary"
+              onClick={handleRegister}
+              disabled={loading}
             >
-              Unirme a {family.name}
-            </Button>
+              {loading ? 'Creando cuenta...' : 'Crear cuenta y unirme →'}
+            </button>
+
+            <p className="auth-footer">
+              ¿Ya tienes cuenta?{' '}
+              <button
+                onClick={() => { setMode('login'); setError('') }}
+                className="auth-footer-link"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
+              >
+                Iniciar sesión
+              </button>
+            </p>
           </div>
         ) : (
-          <>
-            {/* ── REGISTRO ─────────────────────────────── */}
-            {mode === 'register' && (
-              <div className="stack-4">
-                <div>
-                  <h2 className="auth-title">Crear cuenta y unirme</h2>
-                  <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
-                    Crea tu cuenta para unirte a la familia
-                  </p>
-                </div>
+          <div className="stack-4">
+            <h2 className="auth-title">Iniciar sesión y unirme</h2>
 
-                <div className="form-field">
-                  <label className="form-label">Tu nombre</label>
-                  <input
-                    type="text"
-                    value={nombre}
-                    onChange={(e) => setNombre(e.target.value)}
-                    placeholder="Ej. María"
-                    className="input"
-                    autoFocus
-                  />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Correo electrónico</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="tu@correo.com"
-                    className="input"
-                  />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Contraseña</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Mínimo 6 caracteres"
-                    className="input"
-                  />
-                </div>
+            <div className="form-field">
+              <label className="form-label">Correo electrónico</label>
+              <input
+                type="email" value={email} className="input" autoFocus
+                placeholder="tu@correo.com"
+                onChange={e => setEmail(e.target.value)}
+              />
+            </div>
+            <div className="form-field">
+              <label className="form-label">Contraseña</label>
+              <input
+                type="password" value={password} className="input"
+                placeholder="Tu contraseña"
+                onChange={e => setPassword(e.target.value)}
+              />
+            </div>
 
-                <Button
-                  fullWidth
-                  onClick={handleRegister}
-                  loading={joining}
-                  disabled={!nombre.trim() || !email.trim() || password.length < 6}
-                >
-                  Crear cuenta y unirme
-                </Button>
+            {error && <p style={{ color: 'var(--red, #ef4444)', fontSize: 13 }}>{error}</p>}
 
-                <p className="auth-footer">
-                  ¿Ya tienes cuenta?{' '}
-                  <button
-                    onClick={() => setMode('login')}
-                    className="auth-footer-link"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
-                  >
-                    Iniciar sesión
-                  </button>
-                </p>
-              </div>
-            )}
+            <button
+              className="btn-primary"
+              onClick={handleLogin}
+              disabled={loading}
+            >
+              {loading ? 'Iniciando sesión...' : 'Iniciar sesión y unirme →'}
+            </button>
 
-            {/* ── LOGIN ─────────────────────────────────── */}
-            {mode === 'login' && (
-              <div className="stack-4">
-                <div>
-                  <h2 className="auth-title">Iniciar sesión y unirme</h2>
-                </div>
-
-                <div className="form-field">
-                  <label className="form-label">Correo electrónico</label>
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="tu@correo.com"
-                    className="input"
-                    autoFocus
-                  />
-                </div>
-                <div className="form-field">
-                  <label className="form-label">Contraseña</label>
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Tu contraseña"
-                    className="input"
-                  />
-                </div>
-
-                <Button
-                  fullWidth
-                  onClick={handleLogin}
-                  loading={joining}
-                  disabled={!email.trim() || !password}
-                >
-                  Iniciar sesión y unirme
-                </Button>
-
-                <p className="auth-footer">
-                  ¿No tienes cuenta?{' '}
-                  <button
-                    onClick={() => setMode('register')}
-                    className="auth-footer-link"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
-                  >
-                    Crear cuenta
-                  </button>
-                </p>
-              </div>
-            )}
-          </>
+            <p className="auth-footer">
+              ¿No tienes cuenta?{' '}
+              <button
+                onClick={() => { setMode('register'); setError('') }}
+                className="auth-footer-link"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontSize: 'inherit' }}
+              >
+                Crear cuenta
+              </button>
+            </p>
+          </div>
         )}
       </div>
     </div>
