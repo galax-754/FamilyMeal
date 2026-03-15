@@ -1,302 +1,510 @@
 'use client'
-
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { Check, ChevronRight, Activity, Leaf } from 'lucide-react'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { Button } from '@/components/ui/Button'
-import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
-import { getWeekNumber } from '@/lib/votes'
+import { useRouter } from 'next/navigation'
 
-interface FormState {
-  is_diabetic: boolean
-  is_vegetarian: boolean
-  avoid_foods: string[]
-  preferred_categories: string[]
-  max_prep_time: number
-  notes: string
-}
-
-const AVOID_OPTIONS = [
-  { id: 'mariscos', label: 'Mariscos' },
-  { id: 'gluten',   label: 'Gluten'   },
-  { id: 'lacteos',  label: 'Lácteos'  },
-  { id: 'picante',  label: 'Picante'  },
-  { id: 'cerdo',    label: 'Cerdo'    },
-  { id: 'res',      label: 'Res'      },
+const LIKES_OPTIONS = [
+  'Pollo', 'Res', 'Cerdo', 'Pescado', 'Mariscos',
+  'Pasta', 'Arroz', 'Ensaladas', 'Sopas', 'Tacos',
+  'Enchiladas', 'Pozole', 'Verduras', 'Frijoles',
+  'Huevo', 'Desayunos ligeros', 'Platillos mexicanos',
+  'Comida italiana', 'Comida saludable', 'Tamales',
+  'Chilaquiles', 'Quesadillas', 'Sushi', 'Pizza'
 ]
 
-const PREP_TIMES = [
-  { value: 20,  label: '20 min',  desc: 'Rápido' },
-  { value: 40,  label: '40 min',  desc: 'Normal' },
-  { value: 60,  label: '1 hora',  desc: 'Con tiempo' },
-  { value: 120, label: '2+ hrs',  desc: 'Sin límite' },
+const ALLERGIES_OPTIONS = [
+  'Gluten', 'Lácteos', 'Mariscos', 'Nueces',
+  'Cacahuate', 'Huevo', 'Soya', 'Maíz',
+  'Chile picante', 'Cerdo', 'Res', 'Sin restricciones'
 ]
 
 export default function PreferenciasPage() {
+  const [step, setStep] = useState(1)
+  const [likes, setLikes] = useState<string[]>([])
+  const [dislikes, setDislikes] = useState<string[]>([])
+  const [allergies, setAllergies] = useState<string[]>([])
+  const [isDiabetic, setIsDiabetic] = useState(false)
+  const [isVegetarian, setIsVegetarian] = useState(false)
+  const [isVegan, setIsVegan] = useState(false)
+  const [isHealthy, setIsHealthy] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [profileId, setProfileId] = useState('')
+  const [familyId, setFamilyId] = useState('')
   const router = useRouter()
-  const toast = useToast()
-  const supabase = createClient()
-
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [familyId, setFamilyId] = useState<string | null>(null)
-  const [userId, setUserId] = useState<string | null>(null)
-  const [form, setForm] = useState<FormState>({
-    is_diabetic: false,
-    is_vegetarian: false,
-    avoid_foods: [],
-    preferred_categories: ['desayuno', 'comida', 'cena'],
-    max_prep_time: 60,
-    notes: '',
-  })
 
   useEffect(() => {
-    const init = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      setUserId(user.id)
-
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('family_id')
-        .eq('id', user.id)
-        .single()
-
-      if (prof?.family_id) setFamilyId(prof.family_id)
-
-      // Intentar cargar preferencias existentes de esta semana
-      try {
-        const semana = getWeekNumber(new Date())
-        const anio = new Date().getFullYear()
-        const { data: existing } = await supabase
-          .from('user_preferences')
-          .select('*')
-          .eq('profile_id', user.id)
-          .eq('week_number', semana)
-          .eq('year', anio)
-          .maybeSingle()
-
-        if (existing) {
-          setForm({
-            is_diabetic: existing.is_diabetic ?? false,
-            is_vegetarian: existing.is_vegetarian ?? false,
-            avoid_foods: existing.avoid_foods ?? [],
-            preferred_categories: existing.preferred_categories ?? ['desayuno', 'comida', 'cena'],
-            max_prep_time: existing.max_prep_time ?? 60,
-            notes: existing.notes ?? '',
-          })
-        }
-      } catch {
-        // tabla puede no existir todavía
-      }
-
-      setLoading(false)
-    }
-    init()
+    loadProfile()
   }, [])
 
-  const toggleAvoid = (id: string) => {
-    setForm((prev) => ({
-      ...prev,
-      avoid_foods: prev.avoid_foods.includes(id)
-        ? prev.avoid_foods.filter((f) => f !== id)
-        : [...prev.avoid_foods, id],
-    }))
-  }
+  async function loadProfile() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
 
-  const toggleCategory = (cat: string) => {
-    setForm((prev) => ({
-      ...prev,
-      preferred_categories: prev.preferred_categories.includes(cat)
-        ? prev.preferred_categories.filter((c) => c !== cat)
-        : [...prev.preferred_categories, cat],
-    }))
-  }
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, family_id')
+      .eq('id', user.id)
+      .single()
 
-  const handleSave = async () => {
-    if (!userId || !familyId) return
-    setSaving(true)
-    try {
-      const semana = getWeekNumber(new Date())
-      const anio = new Date().getFullYear()
-
-      await supabase
-        .from('user_preferences')
-        .upsert(
-          {
-            profile_id: userId,
-            family_id: familyId,
-            week_number: semana,
-            year: anio,
-            ...form,
-            preferences_completed: true,
-            completed_at: new Date().toISOString(),
-          },
-          { onConflict: 'profile_id,week_number,year' }
-        )
-
-      toast.success('¡Preferencias guardadas!')
-      router.push('/inicio')
-    } catch (err) {
-      console.error(err)
-      toast.error('No se pudieron guardar las preferencias.')
-    } finally {
-      setSaving(false)
+    if (profile) {
+      setProfileId(profile.id)
+      setFamilyId(profile.family_id)
     }
   }
 
-  if (loading) {
-    return (
-      <div>
-        <PageHeader title="Mis preferencias" />
-        <div className="page-content stack-4">
-          {[1, 2, 3].map((i) => <div key={i} className="skeleton" style={{ height: 80, borderRadius: 12 }} />)}
-        </div>
-      </div>
-    )
+  function toggleItem(
+    item: string,
+    list: string[],
+    setList: (l: string[]) => void
+  ) {
+    if (list.includes(item)) {
+      setList(list.filter(i => i !== item))
+    } else {
+      setList([...list, item])
+    }
   }
 
-  return (
-    <div>
-      <PageHeader title="Mis preferencias" subtitle="Esta semana" />
+  async function guardarPreferencias() {
+    if (likes.length === 0) {
+      alert('Selecciona al menos una comida que te guste')
+      return
+    }
+    setLoading(true)
 
-      <div className="page-content-spacious stack-6">
-        {/* ── DIETA ──────────────────────────────────────── */}
-        <section>
-          <h3 className="section-title mb-12">Dieta especial</h3>
-          <div className="card stack-3">
-            {[
-              { key: 'is_diabetic' as const,   label: 'Soy diabético/a',   Icon: Activity },
-              { key: 'is_vegetarian' as const, label: 'Soy vegetariano/a', Icon: Leaf },
-            ].map(({ key, label, Icon }) => (
+    try {
+      const supabase = createClient()
+      const weekNumber = getWeekNumber(new Date())
+      const year = new Date().getFullYear()
+
+      const { error } = await supabase
+        .from('user_preferences')
+        .upsert({
+          profile_id: profileId,
+          family_id: familyId,
+          likes,
+          dislikes,
+          allergies,
+          is_diabetic: isDiabetic,
+          is_vegetarian: isVegetarian,
+          is_vegan: isVegan,
+          preferences_completed: true,
+          week_number: weekNumber,
+          year,
+          completed_at: new Date().toISOString()
+        }, {
+          onConflict: 'profile_id,week_number,year'
+        })
+
+      if (error) throw error
+
+      router.push('/inicio')
+
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Error desconocido'
+      alert('Error al guardar: ' + message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const totalSteps = 4
+  const progress = (step / totalSteps) * 100
+
+  return (
+    <div style={{
+      minHeight: '100vh',
+      maxWidth: '430px',
+      margin: '0 auto',
+      padding: '24px 20px 40px',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+
+      {/* Header con progreso */}
+      <div style={{marginBottom: '28px'}}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: '12px'
+        }}>
+          <h1 style={{
+            fontSize: '20px',
+            fontWeight: 800,
+            color: 'var(--text)'
+          }}>
+            Mis preferencias
+          </h1>
+          <span style={{
+            fontSize: '13px',
+            color: 'var(--muted)',
+            fontWeight: 600
+          }}>
+            {step}/{totalSteps}
+          </span>
+        </div>
+
+        {/* Barra de progreso */}
+        <div style={{
+          height: '4px',
+          background: 'var(--surface2)',
+          borderRadius: '4px',
+          overflow: 'hidden'
+        }}>
+          <div style={{
+            height: '100%',
+            width: `${progress}%`,
+            background: 'linear-gradient(90deg, var(--amber), var(--amber-dark))',
+            borderRadius: '4px',
+            transition: 'width 0.3s ease'
+          }}/>
+        </div>
+      </div>
+
+      {/* PASO 1 — Qué te gusta */}
+      {step === 1 && (
+        <div style={{flex: 1}}>
+          <div style={{marginBottom: '20px'}}>
+            <h2 style={{
+              fontSize: '22px',
+              fontWeight: 800,
+              color: 'var(--text)',
+              marginBottom: '6px'
+            }}>
+              ¿Qué te gusta comer? 😋
+            </h2>
+            <p style={{fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5}}>
+              Selecciona todo lo que disfrutes. Estas opciones
+              aparecerán en tu menú semanal.
+            </p>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            marginBottom: '32px'
+          }}>
+            {LIKES_OPTIONS.map(item => (
               <button
-                key={key}
-                onClick={() => setForm((prev) => ({ ...prev, [key]: !prev[key] }))}
+                key={item}
+                onClick={() => toggleItem(item, likes, setLikes)}
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 12,
-                  padding: '12px 0',
-                  background: 'none',
-                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '50px',
+                  fontSize: '13px',
+                  fontWeight: 500,
                   cursor: 'pointer',
-                  width: '100%',
-                  fontFamily: 'inherit',
-                  textAlign: 'left',
-                  borderBottom: '1px solid var(--border)',
+                  border: likes.includes(item)
+                    ? '1.5px solid rgba(34,197,94,0.5)'
+                    : '1.5px solid var(--border)',
+                  background: likes.includes(item)
+                    ? 'rgba(34,197,94,0.1)'
+                    : 'var(--surface)',
+                  color: likes.includes(item)
+                    ? 'var(--green)'
+                    : 'var(--muted)',
+                  transition: 'all 0.15s ease',
+                  fontFamily: 'Inter, sans-serif'
                 }}
               >
-                <span style={{ width: 30, display: 'flex', justifyContent: 'center' }}>
-                  <Icon style={{ width: 20, height: 20, color: 'var(--muted)' }} />
-                </span>
-                <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{label}</span>
-                <div
-                  style={{
-                    width: 22, height: 22,
-                    borderRadius: '50%',
-                    border: form[key] ? 'none' : '2px solid var(--border-med)',
-                    background: form[key] ? 'var(--green)' : 'transparent',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    flexShrink: 0,
-                    transition: 'background 0.2s',
-                  }}
-                >
-                  {form[key] && <Check style={{ width: 12, height: 12, color: '#fff' }} />}
-                </div>
+                {likes.includes(item) ? '✓ ' : ''}{item}
               </button>
             ))}
           </div>
-        </section>
 
-        {/* ── ALIMENTOS A EVITAR ─────────────────────────── */}
-        <section>
-          <h3 className="section-title mb-12">Alimentos que evito</h3>
-          <div className="pref-option-grid">
-            {AVOID_OPTIONS.map(({ id, label }) => {
-              const selected = form.avoid_foods.includes(id)
-              return (
-                <button
-                  key={id}
-                  onClick={() => toggleAvoid(id)}
-                  className={`pref-option-btn${selected ? ' selected' : ''}`}
-                >
-                  {label}
-                </button>
-              )
-            })}
+          {likes.length > 0 && (
+            <p style={{
+              fontSize: '12px',
+              color: 'var(--amber)',
+              marginBottom: '16px',
+              fontWeight: 600
+            }}>
+              {likes.length} seleccionado{likes.length !== 1 ? 's' : ''} ✓
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* PASO 2 — Qué NO te gusta */}
+      {step === 2 && (
+        <div style={{flex: 1}}>
+          <div style={{marginBottom: '20px'}}>
+            <h2 style={{
+              fontSize: '22px',
+              fontWeight: 800,
+              color: 'var(--text)',
+              marginBottom: '6px'
+            }}>
+              ¿Qué NO quieres comer? 🚫
+            </h2>
+            <p style={{fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5}}>
+              Estos platillos o ingredientes no aparecerán
+              en tu menú. Puedes saltar este paso.
+            </p>
           </div>
-        </section>
 
-        {/* ── TIPOS DE COMIDA ────────────────────────────── */}
-        <section>
-          <h3 className="section-title mb-12">¿Qué comidas quieres en el menú?</h3>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            marginBottom: '32px'
+          }}>
+            {LIKES_OPTIONS.map(item => (
+              <button
+                key={item}
+                onClick={() => toggleItem(item, dislikes, setDislikes)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '50px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  border: dislikes.includes(item)
+                    ? '1.5px solid rgba(239,68,68,0.5)'
+                    : '1.5px solid var(--border)',
+                  background: dislikes.includes(item)
+                    ? 'rgba(239,68,68,0.1)'
+                    : 'var(--surface)',
+                  color: dislikes.includes(item)
+                    ? 'var(--red)'
+                    : 'var(--muted)',
+                  transition: 'all 0.15s ease',
+                  fontFamily: 'Inter, sans-serif'
+                }}
+              >
+                {dislikes.includes(item) ? '✕ ' : ''}{item}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* PASO 3 — Alergias */}
+      {step === 3 && (
+        <div style={{flex: 1}}>
+          <div style={{marginBottom: '20px'}}>
+            <h2 style={{
+              fontSize: '22px',
+              fontWeight: 800,
+              color: 'var(--text)',
+              marginBottom: '6px'
+            }}>
+              ¿Tienes alergias? ⚠️
+            </h2>
+            <p style={{fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5}}>
+              Estos ingredientes serán evitados en todas
+              tus recetas. Puedes saltar si no tienes.
+            </p>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '8px',
+            marginBottom: '32px'
+          }}>
+            {ALLERGIES_OPTIONS.map(item => (
+              <button
+                key={item}
+                onClick={() => toggleItem(item, allergies, setAllergies)}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: '50px',
+                  fontSize: '13px',
+                  fontWeight: 500,
+                  cursor: 'pointer',
+                  border: allergies.includes(item)
+                    ? '1.5px solid rgba(245,158,11,0.5)'
+                    : '1.5px solid var(--border)',
+                  background: allergies.includes(item)
+                    ? 'var(--amber-soft)'
+                    : 'var(--surface)',
+                  color: allergies.includes(item)
+                    ? 'var(--amber)'
+                    : 'var(--muted)',
+                  transition: 'all 0.15s ease',
+                  fontFamily: 'Inter, sans-serif'
+                }}
+              >
+                {allergies.includes(item) ? '⚠ ' : ''}{item}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* PASO 4 — Condiciones de salud */}
+      {step === 4 && (
+        <div style={{flex: 1}}>
+          <div style={{marginBottom: '24px'}}>
+            <h2 style={{
+              fontSize: '22px',
+              fontWeight: 800,
+              color: 'var(--text)',
+              marginBottom: '6px'
+            }}>
+              Condiciones de salud 🩺
+            </h2>
+            <p style={{fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5}}>
+              Esto nos ayuda a personalizar las recetas
+              para que sean seguras y apropiadas para ti.
+            </p>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+            marginBottom: '32px'
+          }}>
             {[
-              { id: 'desayuno', label: 'Desayuno', emoji: '🌅' },
-              { id: 'comida',   label: 'Comida',   emoji: '☀️' },
-              { id: 'cena',     label: 'Cena',     emoji: '🌙' },
-            ].map(({ id, label, emoji }) => {
-              const selected = form.preferred_categories.includes(id)
-              return (
-                <button
-                  key={id}
-                  onClick={() => toggleCategory(id)}
-                  className={`pref-option-btn${selected ? ' selected' : ''}`}
-                  style={{ flex: 1 }}
-                >
-                  <span className="pref-option-emoji">{emoji}</span>
-                  {label}
-                </button>
-              )
-            })}
+              {
+                key: 'diabetic',
+                emoji: '🩺',
+                label: 'Soy diabético/a',
+                sub: 'Se priorizarán recetas con bajo índice glucémico',
+                value: isDiabetic,
+                set: setIsDiabetic
+              },
+              {
+                key: 'vegetarian',
+                emoji: '🥗',
+                label: 'Soy vegetariano/a',
+                sub: 'No se incluirá carne ni pollo',
+                value: isVegetarian,
+                set: setIsVegetarian
+              },
+              {
+                key: 'vegan',
+                emoji: '🌱',
+                label: 'Soy vegano/a',
+                sub: 'Sin ningún producto de origen animal',
+                value: isVegan,
+                set: setIsVegan
+              },
+              {
+                key: 'healthy',
+                emoji: '💪',
+                label: 'Quiero comer saludable',
+                sub: 'Se priorizarán recetas nutritivas y balanceadas',
+                value: isHealthy,
+                set: setIsHealthy
+              }
+            ].map(item => (
+              <div
+                key={item.key}
+                onClick={() => item.set(!item.value)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '14px',
+                  padding: '16px',
+                  borderRadius: 'var(--r-sm)',
+                  background: item.value
+                    ? 'rgba(245,158,11,0.08)'
+                    : 'var(--surface)',
+                  border: item.value
+                    ? '1.5px solid rgba(245,158,11,0.3)'
+                    : '1.5px solid var(--border)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+              >
+                <span style={{fontSize: '24px'}}>{item.emoji}</span>
+                <div style={{flex: 1}}>
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    color: 'var(--text)',
+                    marginBottom: '2px'
+                  }}>
+                    {item.label}
+                  </div>
+                  <div style={{fontSize: '12px', color: 'var(--muted)'}}>
+                    {item.sub}
+                  </div>
+                </div>
+                {/* Toggle */}
+                <div style={{
+                  width: '44px',
+                  height: '24px',
+                  borderRadius: '12px',
+                  background: item.value
+                    ? 'var(--amber)'
+                    : 'var(--surface2)',
+                  position: 'relative',
+                  transition: 'background 0.2s ease',
+                  flexShrink: 0
+                }}>
+                  <div style={{
+                    position: 'absolute',
+                    top: '3px',
+                    left: item.value ? '23px' : '3px',
+                    width: '18px',
+                    height: '18px',
+                    borderRadius: '50%',
+                    background: '#fff',
+                    transition: 'left 0.2s ease',
+                    boxShadow: '0 1px 4px rgba(0,0,0,0.3)'
+                  }}/>
+                </div>
+              </div>
+            ))}
           </div>
-        </section>
+        </div>
+      )}
 
-        {/* ── TIEMPO DE PREPARACIÓN ─────────────────────── */}
-        <section>
-          <h3 className="section-title mb-12">Tiempo máximo de preparación</h3>
-          <div className="pref-option-grid">
-            {PREP_TIMES.map(({ value, label, desc }) => {
-              const selected = form.max_prep_time === value
-              return (
-                <button
-                  key={value}
-                  onClick={() => setForm((prev) => ({ ...prev, max_prep_time: value }))}
-                  className={`pref-option-btn${selected ? ' selected' : ''}`}
-                >
-                  <span style={{ fontSize: 18, fontWeight: 800 }}>{label}</span>
-                  <span style={{ fontSize: 11, color: selected ? 'var(--amber)' : 'var(--muted)' }}>{desc}</span>
-                </button>
-              )
-            })}
-          </div>
-        </section>
+      {/* Botones de navegación */}
+      <div style={{
+        display: 'flex',
+        gap: '10px',
+        marginTop: 'auto',
+        paddingTop: '16px'
+      }}>
+        {step > 1 && (
+          <button
+            className="btn-ghost"
+            onClick={() => setStep(step - 1)}
+            style={{flex: 1}}
+          >
+            ← Atrás
+          </button>
+        )}
 
-        {/* ── NOTAS ─────────────────────────────────────── */}
-        <section>
-          <h3 className="section-title mb-12">Notas adicionales (opcional)</h3>
-          <textarea
-            value={form.notes}
-            onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))}
-            placeholder="Ej. No me gustan los tacos de canasta, prefiero algo ligero los lunes..."
-            className="input"
-            rows={3}
-            style={{ resize: 'none', lineHeight: 1.5 }}
-          />
-        </section>
-
-        <Button
-          fullWidth
-          onClick={handleSave}
-          loading={saving}
-          icon={<ChevronRight style={{ width: 18, height: 18 }} />}
-        >
-          Guardar preferencias
-        </Button>
+        {step < totalSteps ? (
+          <button
+            className="btn-primary"
+            onClick={() => {
+              if (step === 1 && likes.length === 0) {
+                alert('Selecciona al menos una comida que te guste')
+                return
+              }
+              setStep(step + 1)
+            }}
+            style={{flex: 1}}
+          >
+            Siguiente →
+          </button>
+        ) : (
+          <button
+            className="btn-primary"
+            onClick={guardarPreferencias}
+            disabled={loading}
+            style={{flex: 1}}
+          >
+            {loading ? 'Guardando...' : '✅ Guardar preferencias'}
+          </button>
+        )}
       </div>
     </div>
   )
+}
+
+function getWeekNumber(date: Date): number {
+  const firstDayOfYear = new Date(date.getFullYear(), 0, 1)
+  const pastDaysOfYear =
+    (date.getTime() - firstDayOfYear.getTime()) / 86400000
+  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7)
 }

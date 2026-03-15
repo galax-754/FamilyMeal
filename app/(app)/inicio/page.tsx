@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
   CalendarDays, CheckSquare, UtensilsCrossed, ChevronRight,
@@ -55,6 +56,7 @@ export default function InicioPage() {
   const [weeklyStatus, setWeeklyStatus] = useState<{ recipes_generated?: boolean } | null>(null)
 
   const supabase = createClient()
+  const router = useRouter()
 
   const load = async () => {
     setLoading(true)
@@ -188,6 +190,11 @@ export default function InicioPage() {
       // ── Determinar estado del flujo ──────────────────
       // Admin siempre ve el dashboard normal
       if (prof.role === 'admin') {
+        // Si no tiene preferencias completadas esta semana, redirigir a llenarlas
+        if (!prefs?.preferences_completed) {
+          router.push('/preferencias')
+          return
+        }
         setFlowState('dashboard')
         return
       }
