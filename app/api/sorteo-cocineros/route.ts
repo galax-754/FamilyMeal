@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { getLunesDeSemana } from '@/lib/utils'
 
 const DAYS = [
   { num: 1, name: 'Lunes' },
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Actualizar cook_id en weekly_menu donde ya hay entradas
+  const weekStart = getLunesDeSemana()
   for (const day of DAYS) {
     await supabase
       .from('weekly_menu')
@@ -127,8 +129,7 @@ export async function POST(req: NextRequest) {
       })
       .eq('family_id', family_id)
       .eq('day_of_week', day.num)
-      .eq('week_number', weekNumber)
-      .eq('year', year)
+      .eq('week_start', weekStart)
   }
 
   const saved = DAYS.map((day) => ({

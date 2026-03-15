@@ -52,7 +52,7 @@ export interface SwipeVote {
   meal_id: string
   profile_id: string
   family_id: string
-  vote: boolean
+  vote: number
   week_number: number
   year: number
   created_at: string

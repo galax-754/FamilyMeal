@@ -191,15 +191,7 @@ export default function InicioPage() {
       // ── Determinar estado del flujo ──────────────────
       // Admin siempre ve el dashboard normal
       if (prof.role === 'admin') {
-        const { data: anyCompletedPrefs } = await supabase
-          .from('user_preferences')
-          .select('id')
-          .eq('profile_id', user.id)
-          .eq('preferences_completed', true)
-          .limit(1)
-          .maybeSingle()
-
-        if (!anyCompletedPrefs) {
+        if (!prefs?.preferences_completed) {
           router.push('/preferencias')
           return
         }

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { useProfile } from '@/contexts/ProfileContext'
 import {
   ShoppingCart, ShoppingBag, Check, Copy,
   ExternalLink, ChevronDown, ChevronUp,
@@ -61,51 +62,42 @@ function getTodayDayOfWeek(): number {
 
 export default function TareasPage() {
   const router = useRouter()
+  const { familyId, userId, loading: profileLoading } = useProfile()
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [shoppingList, setShoppingList] = useState<any>(null)
   const [checkedItems, setCheckedItems] = useState<Record<string, boolean>>({})
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({})
-  const [familyId, setFamilyId] = useState('')
   const [copied, setCopied] = useState(false)
   const [totalMatches, setTotalMatches] = useState(0)
   const [myDays, setMyDays] = useState<any[]>([])
   const [allAssignments, setAllAssignments] = useState<any[]>([])
-  const [currentUserId, setCurrentUserId] = useState('')
   const [todayMeal, setTodayMeal] = useState<any[]>([])
   const [showAllDays, setShowAllDays] = useState(false)
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    if (profileLoading) return
+    if (!familyId || !userId) { setLoading(false); return }
+    loadData()
+  }, [profileLoading, familyId, userId])
 
   async function loadData() {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
 
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('family_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.family_id) { setLoading(false); return }
-    setFamilyId(profile.family_id)
-    setCurrentUserId(user.id)
 
     const [{ data: menu }, { data: list }, { data: assignments }] = await Promise.all([
       supabase
         .from('weekly_menu')
         .select('id')
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyId!)
         .eq('week_number', weekNumber)
         .eq('year', year),
       supabase
         .from('shopping_list')
         .select('*')
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyId!)
         .eq('week_number', weekNumber)
         .eq('year', year)
         .maybeSingle(),
@@ -117,7 +109,7 @@ export default function TareasPage() {
           dishes_washer:profiles!cooking_assignments_dishes_washer_id_fkey(id, name, avatar_color),
           utensils_washer:profiles!cooking_assignments_utensils_washer_id_fkey(id, name, avatar_color)
         `)
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyId!)
         .eq('week_number', weekNumber)
         .eq('year', year)
         .order('day_of_week'),
@@ -125,25 +117,25 @@ export default function TareasPage() {
 
     setTotalMatches(menu?.length || 0)
     setAllAssignments(assignments || [])
-    setMyDays(assignments?.filter(a => a.profile_id === user.id) || [])
+    setMyDays(assignments?.filter(a => a.profile_id === userId) || [])
 
     if (list) {
       setShoppingList(list)
-      const saved = localStorage.getItem(`checked_${profile.family_id}_${weekNumber}`)
+      const saved = localStorage.getItem(`checked_${familyId}_${weekNumber}`)
       if (saved) setCheckedItems(JSON.parse(saved))
     }
 
     // Ver si hoy le toca cocinar al usuario
     const todayDow = getTodayDayOfWeek()
     const isCookingToday = assignments?.some(
-      a => a.day_of_week === todayDow && a.profile_id === user.id
+      a => a.day_of_week === todayDow && a.profile_id === userId
     )
 
     if (isCookingToday) {
       const { data: todayMeals } = await supabase
         .from('weekly_menu')
         .select('*, meals(id, name, image_url, category, prep_time_minutes)')
-        .eq('family_id', profile.family_id)
+        .eq('family_id', familyId!)
         .eq('day_of_week', todayDow)
         .eq('week_number', weekNumber)
         .eq('year', year)
@@ -422,7 +414,7 @@ export default function TareasPage() {
                   {/* Tareas del día */}
                   <div style={{ background: 'var(--surface)' }}>
                     {tasks.map(({ Icon, label, person, description }, j) => {
-                      const isMe = person?.id === currentUserId
+                      const isMe = person?.id === userId
                       return (
                         <div
                           key={j}

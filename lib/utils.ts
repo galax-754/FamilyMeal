@@ -45,6 +45,11 @@ export function toDateString(date: Date): string {
   return date.toISOString().split('T')[0]
 }
 
+/** Devuelve la fecha del lunes de la semana actual en formato 'YYYY-MM-DD'. */
+export function getLunesDeSemana(): string {
+  return toDateString(getWeekStart())
+}
+
 export function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()

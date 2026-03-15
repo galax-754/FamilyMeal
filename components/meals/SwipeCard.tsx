@@ -327,7 +327,7 @@ export function SwipeCard({
                           className="voter-status voter-pending"
                           style={{ border: '1.5px solid rgba(255,255,255,0.15)', background: 'transparent' }}
                         />
-                      ) : vote.vote ? (
+                      ) : vote.vote === 1 ? (
                         <div className="voter-status voter-voted">✓</div>
                       ) : (
                         <div className="voter-status" style={{ background: 'var(--red)', fontSize: 8 }}>✕</div>

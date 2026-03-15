@@ -9,6 +9,8 @@ import {
   Shuffle, ChefHat,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { getLunesDeSemana } from '@/lib/utils'
+import { useProfile } from '@/contexts/ProfileContext'
 
 const DAYS = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
 
@@ -31,37 +33,25 @@ const CATEGORIAS = [
 
 export default function MenuPage() {
   const router = useRouter()
+  const { familyId, isAdmin, loading: profileLoading } = useProfile()
   const [menuItems, setMenuItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [familyId, setFamilyId] = useState('')
-  const [isAdmin, setIsAdmin] = useState(false)
   const [totalMatches, setTotalMatches] = useState(0)
   const [generatingList, setGeneratingList] = useState(false)
 
-  useEffect(() => { loadMenu() }, [])
+  useEffect(() => {
+    if (profileLoading) return
+    if (!familyId) { setLoading(false); return }
+    loadMenu()
+  }, [profileLoading, familyId])
 
   async function loadMenu() {
     const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const weekNumber = getWeekNumber(new Date())
-    const year = new Date().getFullYear()
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('family_id, role')
-      .eq('id', user.id)
-      .single()
-
-    if (!profile?.family_id) { setLoading(false); return }
-    setFamilyId(profile.family_id)
-    setIsAdmin(profile.role === 'admin')
 
     const { data: menu } = await supabase
       .from('weekly_menu')
       .select(`
-        id, day_of_week, cook_id,
+        id, day_of_week, meal_type, cook_id,
         meals (
           id, name, description, category,
           meal_emoji, image_url, estimated_cost,
@@ -70,9 +60,8 @@ export default function MenuPage() {
           ingredients, instructions
         )
       `)
-      .eq('family_id', profile.family_id)
-      .eq('week_number', weekNumber)
-      .eq('year', year)
+      .eq('family_id', familyId!)
+      .eq('week_start', getLunesDeSemana())
       .order('day_of_week')
 
     setMenuItems(menu || [])
@@ -80,11 +69,12 @@ export default function MenuPage() {
     setLoading(false)
   }
 
-  function getMealForDay(day: number, categoryKey: string) {
+  function getMealForDay(day: number, category: string) {
     return menuItems.find(item => {
       const meal = Array.isArray(item.meals) ? item.meals[0] : item.meals
       return item.day_of_week === day &&
-        meal?.category?.toLowerCase() === categoryKey
+        item.meal_type === category.toLowerCase() &&
+        meal != null
     })
   }
 

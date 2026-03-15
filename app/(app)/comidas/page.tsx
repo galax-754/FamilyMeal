@@ -12,6 +12,7 @@ import { MealCardSkeleton } from '@/components/ui/Skeleton'
 import { ErrorMessage, EmptyState } from '@/components/ui/ErrorMessage'
 import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
+import { getLunesDeSemana } from '@/lib/utils'
 import { Meal, MealCategory, Profile, SwipeVote } from '@/types'
 function getWeekNumber(date: Date): number {
   // El domingo ya es semana nueva: Dom–Sáb en vez de Lun–Dom (ISO)
@@ -64,6 +65,7 @@ function ComidasContent() {
   const [progress, setProgress] = useState<VotingProgress>({ desayunos: 0, comidas: 0, cenas: 0 })
   const [showMatchAnimation, setShowMatchAnimation] = useState(false)
   const [matchMeal, setMatchMeal] = useState<{ name: string; category: string; image_url?: string; assignedDay?: number } | null>(null)
+  const [allVoted, setAllVoted] = useState(false)
 
   const toast = useToast()
   const supabase = createClient()
@@ -112,20 +114,32 @@ function ComidasContent() {
           .eq('profile_id', user.id)
           .eq('week_number', weekNumber)
           .eq('year', year),
-        // Votos de toda la familia esta semana (para mostrar avatares)
-        supabase
-          .from('meal_votes')
-          .select('meal_id, profile_id, vote, week_number, year, family_id, id')
-          .eq('family_id', prof.family_id)
-          .eq('week_number', weekNumber)
-          .eq('year', year),
-        // Menú semanal con categoría de cada comida
+        // Votos de toda la familia esta semana (para mostrar avatares) — con caché
+        (() => {
+          const cacheKey = `votes_${prof.family_id}_${weekNumber}`
+          const cached = localStorage.getItem(cacheKey)
+          if (cached) {
+            return Promise.resolve({ data: JSON.parse(cached) as SwipeVote[], error: null })
+          }
+          return supabase
+            .from('meal_votes')
+            .select('meal_id, profile_id, vote, week_number, year, family_id, id')
+            .eq('family_id', prof.family_id)
+            .eq('week_number', weekNumber)
+            .eq('year', year)
+            .then(res => {
+              if (res.data) {
+                localStorage.setItem(cacheKey, JSON.stringify(res.data))
+              }
+              return res
+            })
+        })(),
+        // Menú semanal con meal_type directo
         supabase
           .from('weekly_menu')
-          .select('meal_id, meals(category)')
+          .select('meal_id, meal_type')
           .eq('family_id', prof.family_id)
-          .eq('week_number', weekNumber)
-          .eq('year', year),
+          .eq('week_start', getLunesDeSemana()),
       ])
 
       if (err) throw err
@@ -149,24 +163,16 @@ function ComidasContent() {
       setMeals(scored)             // todas → modo lista
       setSwipeMeals(unvoted)       // sin votar → modo swipe
       setSwipeIndex(0)             // siempre empieza en 0 (ya filtramos)
+      setAllVoted(scored.length > 0 && unvoted.length === 0)
       setMembers(mems ?? [])
       setExistingVotes((allVotes ?? []) as SwipeVote[])
 
-      // Progreso de matches desde weekly_menu + categoria de la comida
+      // Progreso de matches leyendo meal_type directamente
       const entries = weeklyMenu ?? []
       const prog = {
-        desayunos: entries.filter(e => {
-          const m = Array.isArray(e.meals) ? e.meals[0] : e.meals
-          return (m as { category?: string } | null)?.category?.toLowerCase() === 'desayuno'
-        }).length,
-        comidas: entries.filter(e => {
-          const m = Array.isArray(e.meals) ? e.meals[0] : e.meals
-          return (m as { category?: string } | null)?.category?.toLowerCase() === 'comida'
-        }).length,
-        cenas: entries.filter(e => {
-          const m = Array.isArray(e.meals) ? e.meals[0] : e.meals
-          return (m as { category?: string } | null)?.category?.toLowerCase() === 'cena'
-        }).length,
+        desayunos: entries.filter(e => e.meal_type === 'desayuno').length,
+        comidas:   entries.filter(e => e.meal_type === 'comida').length,
+        cenas:     entries.filter(e => e.meal_type === 'cena').length,
       }
       setProgress(prog)
     } catch {
@@ -230,42 +236,39 @@ function ComidasContent() {
     console.log(`Match check: ${totalLikes}/${totalMembers} likes para ${meal.name}`)
 
     if (totalLikes >= totalMembers) {
-      await handleMatch(meal, fid)
+      await handleMatch(meal)
     }
   }
 
-  const handleMatch = async (meal: Meal, fid: string) => {
+  const handleMatch = async (meal: Meal) => {
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
+    const weekStart = getLunesDeSemana()
+    const mealType = meal.category.toLowerCase()
 
     const { data: existing } = await supabase
       .from('weekly_menu')
       .select('id')
       .eq('meal_id', meal.id)
-      .eq('family_id', fid)
-      .eq('week_number', weekNumber)
-      .eq('year', year)
+      .eq('family_id', familyId!)
+      .eq('week_start', weekStart)
       .maybeSingle()
 
     if (existing) return
 
     const { data: assignedDays } = await supabase
       .from('weekly_menu')
-      .select('day_of_week, meals(category)')
-      .eq('family_id', fid)
-      .eq('week_number', weekNumber)
-      .eq('year', year)
+      .select('day_of_week, meal_type')
+      .eq('family_id', familyId!)
+      .eq('week_start', weekStart)
 
-    const daysUsedForCategory = assignedDays
-      ?.filter(a => {
-        const m = Array.isArray(a.meals) ? a.meals[0] : a.meals
-        return (m as { category?: string } | null)?.category === meal.category
-      })
+    const daysUsed = assignedDays
+      ?.filter(a => a.meal_type === mealType)
       .map(a => a.day_of_week) || []
 
     let nextDay: number | null = null
     for (let d = 1; d <= 7; d++) {
-      if (!daysUsedForCategory.includes(d)) {
+      if (!daysUsed.includes(d)) {
         nextDay = d
         break
       }
@@ -276,31 +279,33 @@ function ComidasContent() {
     const { error } = await supabase
       .from('weekly_menu')
       .insert({
-        family_id: fid,
+        family_id: familyId,
         meal_id: meal.id,
         day_of_week: nextDay,
+        meal_type: mealType,
+        week_start: weekStart,
         week_number: weekNumber,
         year,
-        auto_assigned: true
+        auto_assigned: true,
       })
 
     if (!error) {
-      const field = meal.category === 'desayuno'
+      const field = mealType === 'desayuno'
         ? 'desayunos_matched'
-        : meal.category === 'comida'
+        : mealType === 'comida'
         ? 'comidas_matched'
         : 'cenas_matched'
 
       await supabase.rpc('increment_match_count', {
-        p_family_id: fid,
+        p_family_id: familyId,
         p_week_number: weekNumber,
         p_year: year,
         p_field: field
       })
 
-      const mealConDia = { ...meal, assignedDay: nextDay }
-      setMatchMeal(mealConDia)
+      setMatchMeal({ ...meal, assignedDay: nextDay })
       setShowMatchAnimation(true)
+      setTimeout(() => setShowMatchAnimation(false), 3500)
 
       setProgress(prev => ({
         ...prev,
@@ -361,7 +366,11 @@ function ComidasContent() {
       await checkForMatch(currentMeal, currentFamilyId)
     }
 
-    setSwipeIndex(prev => prev + 1)
+    const nextIndex = swipeIndex + 1
+    setSwipeIndex(nextIndex)
+    if (nextIndex >= swipeMeals.length) {
+      setAllVoted(true)
+    }
   }
 
   const filtered = meals.filter((m) => {
@@ -579,28 +588,20 @@ function ComidasContent() {
                     description="Agrega comidas al catálogo primero"
                     action={{ label: 'Agregar comida', onClick: () => window.location.href = '/comidas/nueva' }}
                   />
-                ) : swipeMeals.length === 0 ? (
+                ) : (allVoted || swipeMeals.length === 0) ? (
                   /* ── YA VOTASTE TODAS ── */
-                  <div style={{
-                    display: 'flex',
-                    flexDirection: 'column',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    minHeight: '50vh',
-                    textAlign: 'center',
-                    padding: '32px',
-                  }}>
+                  <div style={{ textAlign: 'center', padding: '40px 20px' }}>
                     <CheckCircle
                       size={52}
                       color="var(--green)"
                       strokeWidth={1.5}
-                      style={{ marginBottom: '16px' }}
+                      style={{ margin: '0 auto 16px' }}
                     />
                     <h2 style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)', marginBottom: '8px' }}>
                       Ya votaste todo
                     </h2>
-                    <p style={{ fontSize: '14px', color: 'var(--muted)', lineHeight: 1.6, marginBottom: '24px' }}>
-                      Esperando a que los demás terminen de votar.
+                    <p style={{ fontSize: '14px', color: 'var(--muted)', marginBottom: '24px' }}>
+                      Espera a que los demás terminen.
                     </p>
                     <button className="btn-ghost" onClick={() => router.push('/menu')}>
                       Ver menú →
