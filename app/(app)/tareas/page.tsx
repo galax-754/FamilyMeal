@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { Plus, CheckCircle2, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -167,6 +167,11 @@ export default function TareasPage() {
       />
 
       <div className="page-content stack-4">
+        {/* ── TURNOS DE COCINA ─────────────────────────────── */}
+        {!loading && familyId && userId && (
+          <MisTurnos profileId={userId} familyId={familyId} />
+        )}
+
         {/* ── CARD DE LISTA DE COMPRAS ─────────────────────── */}
         {!loading && (menuCompleto || shoppingList) && (
           <Link href="/menu/lista" className="shopping-task-card">
@@ -228,6 +233,7 @@ export default function TareasPage() {
         )}
       </div>
 
+      {/* ── MODAL NUEVA TAREA ────────────────────────────── */}
       <Modal open={showAdd} onClose={() => setShowAdd(false)} title="Nueva tarea">
         <div className="stack-4">
           <div className="form-field">
@@ -274,6 +280,178 @@ export default function TareasPage() {
           </Button>
         </div>
       </Modal>
+    </div>
+  )
+}
+
+// ─── Componente de turnos de cocina ──────────────────────────────────────────
+
+interface CookingAssignment {
+  id: string
+  profile_id: string
+  day_of_week: number
+  profiles: { id: string; name: string; avatar_color: string | null } | null
+}
+
+const DAY_NAMES = ['', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo']
+const DAY_EMOJIS: Record<number, string> = {
+  1: '🌅', 2: '🌤', 3: '⛅', 4: '🌥', 5: '🎉', 6: '😎', 7: '🌙',
+}
+
+function MisTurnos({
+  profileId,
+  familyId,
+}: {
+  profileId: string
+  familyId: string
+}) {
+  const [myDays, setMyDays] = useState<CookingAssignment[]>([])
+  const [allAssignments, setAllAssignments] = useState<CookingAssignment[]>([])
+  const [loadingTurnos, setLoadingTurnos] = useState(true)
+
+  const loadAssignments = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sorteo-cocineros?family_id=${familyId}`)
+      const data = await res.json()
+      const list: CookingAssignment[] = data.assignments || []
+      setAllAssignments(list)
+      setMyDays(list.filter((a) => a.profile_id === profileId))
+    } finally {
+      setLoadingTurnos(false)
+    }
+  }, [familyId, profileId])
+
+  useEffect(() => { loadAssignments() }, [loadAssignments])
+
+  if (loadingTurnos) {
+    return <div className="skeleton" style={{ height: '80px', borderRadius: 12 }} />
+  }
+
+  if (allAssignments.length === 0) {
+    return (
+      <div className="card" style={{ marginBottom: '4px' }}>
+        <div style={{
+          fontSize: '13px',
+          color: 'var(--muted)',
+          textAlign: 'center',
+          padding: '8px 0',
+        }}>
+          El administrador aún no ha sorteado los turnos de cocina
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      {myDays.length > 0 && (
+        <>
+          <div className="section-header" style={{ marginBottom: '10px' }}>
+            <span className="section-title">👨‍🍳 Me toca cocinar</span>
+          </div>
+
+          <div style={{
+            display: 'flex',
+            gap: '8px',
+            overflowX: 'auto',
+            paddingBottom: '4px',
+            marginBottom: '16px',
+          }}>
+            {myDays.map((day) => (
+              <div key={day.day_of_week} style={{
+                flexShrink: 0,
+                padding: '12px 16px',
+                background: 'rgba(245,158,11,0.1)',
+                border: '1.5px solid rgba(245,158,11,0.3)',
+                borderRadius: 'var(--r-sm)',
+                textAlign: 'center',
+                minWidth: '80px',
+              }}>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}>
+                  {DAY_EMOJIS[day.day_of_week]}
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--amber)' }}>
+                  {DAY_NAMES[day.day_of_week]}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      <div className="section-header" style={{ marginBottom: '10px' }}>
+        <span className="section-title">📅 Turnos de cocina esta semana</span>
+      </div>
+
+      <div className="card">
+        {allAssignments.map((assignment, i) => {
+          const profile = Array.isArray(assignment.profiles)
+            ? assignment.profiles[0]
+            : assignment.profiles
+          const isMe = assignment.profile_id === profileId
+
+          return (
+            <div key={assignment.id} style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              padding: isMe ? '10px 8px' : '10px 0',
+              borderBottom: i < allAssignments.length - 1
+                ? '1px solid var(--border)'
+                : 'none',
+              background: isMe ? 'rgba(245,158,11,0.04)' : 'transparent',
+              borderRadius: isMe ? '8px' : '0',
+            }}>
+              <span style={{ fontSize: '16px', width: '24px', textAlign: 'center' }}>
+                {DAY_EMOJIS[assignment.day_of_week]}
+              </span>
+
+              <span style={{
+                fontSize: '13px',
+                color: 'var(--muted)',
+                fontWeight: 600,
+                width: '90px',
+                flexShrink: 0,
+              }}>
+                {DAY_NAMES[assignment.day_of_week]}
+              </span>
+
+              <div style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '50%',
+                background: profile?.avatar_color || '#f59e0b',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '13px',
+                fontWeight: 700,
+                color: '#000',
+                flexShrink: 0,
+                border: isMe ? '2px solid var(--amber)' : 'none',
+              }}>
+                {profile?.name?.charAt(0).toUpperCase()}
+              </div>
+
+              <span style={{
+                fontSize: '14px',
+                fontWeight: isMe ? 700 : 500,
+                color: isMe ? 'var(--amber)' : 'var(--text)',
+                flex: 1,
+              }}>
+                {profile?.name}
+                {isMe && (
+                  <span style={{ fontSize: '11px', color: 'var(--amber)', marginLeft: '6px' }}>
+                    (tú)
+                  </span>
+                )}
+              </span>
+
+              <span style={{ fontSize: '16px' }}>👨‍🍳</span>
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

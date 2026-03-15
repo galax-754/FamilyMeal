@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import { ShoppingCart } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -20,6 +20,7 @@ export default function MenuPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [familyId, setFamilyId] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
   const [loadingSlot, setLoadingSlot] = useState<string | undefined>()
   const [showShuffle, setShowShuffle] = useState(false)
   const [shuffling, setShuffling] = useState(false)
@@ -32,8 +33,9 @@ export default function MenuPage() {
   const loadFamily = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return null
-    const { data: prof } = await supabase.from('profiles').select('family_id').eq('id', user.id).single()
+    const { data: prof } = await supabase.from('profiles').select('family_id, role').eq('id', user.id).single()
     setFamilyId(prof?.family_id ?? null)
+    setIsAdmin(prof?.role === 'admin')
     return prof?.family_id ?? null
   }
 
@@ -220,6 +222,11 @@ export default function MenuPage() {
               loadingSlot={loadingSlot}
             />
 
+            {/* Sorteo de cocineros — solo admin */}
+            {familyId && (
+              <SorteoCocineros familyId={familyId} isAdmin={isAdmin} />
+            )}
+
             {/* Botón de lista del súper — aparece cuando hay comidas en el menú */}
             {entries.length > 0 && (
               <button
@@ -246,6 +253,185 @@ export default function MenuPage() {
         cancelText="Cancelar"
         loading={shuffling}
       />
+    </div>
+  )
+}
+
+// ─── Componente de sorteo de cocineros ───────────────────────────────────────
+
+interface AssignmentPreview {
+  day_num: number
+  day_name: string
+  cook_id: string
+  cook_name: string
+  cook_color: string | null
+}
+
+function SorteoCocineros({
+  familyId,
+  isAdmin,
+}: {
+  familyId: string
+  isAdmin: boolean
+}) {
+  const [preview, setPreview] = useState<AssignmentPreview[]>([])
+  const [confirmed, setConfirmed] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const [showPreview, setShowPreview] = useState(false)
+
+  // Verificar si ya hay sorteo confirmado esta semana
+  const checkExisting = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sorteo-cocineros?family_id=${familyId}`)
+      const data = await res.json()
+      if (data.assignments?.length > 0) setConfirmed(true)
+    } finally {
+      setChecking(false)
+    }
+  }, [familyId])
+
+  useEffect(() => { checkExisting() }, [checkExisting])
+
+  async function sortear() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/sorteo-cocineros', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ family_id: familyId, confirm: false }),
+      })
+      const data = await res.json()
+      setPreview(data.preview)
+      setShowPreview(true)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function confirmar() {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/sorteo-cocineros', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ family_id: familyId, confirm: true }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        setConfirmed(true)
+        setShowPreview(false)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (checking || !isAdmin) return null
+
+  return (
+    <div style={{ marginTop: '8px' }}>
+      {!confirmed && !showPreview && (
+        <button
+          className="btn-primary"
+          onClick={sortear}
+          disabled={loading}
+          style={{ width: '100%' }}
+        >
+          {loading ? 'Sorteando...' : '🎲 Sortear quién cocina cada día'}
+        </button>
+      )}
+
+      {showPreview && (
+        <div className="card">
+          <div style={{
+            fontSize: '15px',
+            fontWeight: 700,
+            color: 'var(--text)',
+            marginBottom: '16px',
+          }}>
+            🎲 Resultado del sorteo
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
+            {preview.map((item) => (
+              <div key={item.day_num} style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 12px',
+                background: 'var(--surface2)',
+                borderRadius: 'var(--r-sm)',
+              }}>
+                <span style={{
+                  fontSize: '13px',
+                  color: 'var(--muted)',
+                  fontWeight: 600,
+                  width: '90px',
+                }}>
+                  {item.day_name}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <div style={{
+                    width: '28px',
+                    height: '28px',
+                    borderRadius: '50%',
+                    background: item.cook_color || '#f59e0b',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    color: '#000',
+                  }}>
+                    {item.cook_name.charAt(0).toUpperCase()}
+                  </div>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text)' }}>
+                    {item.cook_name}
+                  </span>
+                </div>
+                <span style={{ fontSize: '16px' }}>👨‍🍳</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <button
+              className="btn-ghost"
+              onClick={sortear}
+              disabled={loading}
+              style={{ flex: 1 }}
+            >
+              🔀 Re-sortear
+            </button>
+            <button
+              className="btn-primary"
+              onClick={confirmar}
+              disabled={loading}
+              style={{ flex: 1 }}
+            >
+              ✅ Confirmar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {confirmed && (
+        <div style={{
+          padding: '12px 16px',
+          background: 'rgba(34,197,94,0.08)',
+          border: '1px solid rgba(34,197,94,0.2)',
+          borderRadius: 'var(--r-sm)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+        }}>
+          <span style={{ fontSize: '20px' }}>✅</span>
+          <span style={{ fontSize: '13px', color: 'var(--green)', fontWeight: 600 }}>
+            Sorteo confirmado — ya aparece en Tareas
+          </span>
+        </div>
+      )}
     </div>
   )
 }
