@@ -1,0 +1,5 @@
+export const SUPABASE_URL       = process.env.NEXT_PUBLIC_SUPABASE_URL  || ''
+export const SUPABASE_ANON      = process.env.NEXT_PUBLIC_SUPABASE_ANON  || ''
+export const CLAUDE_API_KEY     = process.env.CLAUDE_API_KEY              || ''
+export const GROQ_API_KEY       = process.env.GROQ_API_KEY                || ''
+export const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY        || ''

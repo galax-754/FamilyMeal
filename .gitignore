@@ -8,7 +8,7 @@
 !.env.*.example
 !.env.example
 
-# Config con claves reales (versión pública en config.example.js)
+# Config con claves reales (config.ts es la versión segura que sí se sube)
 config.js
 
 # Certificados y claves privadas
