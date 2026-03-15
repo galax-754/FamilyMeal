@@ -23,7 +23,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'family_id requerido' }, { status: 400 })
     }
 
-    // Verificar que el usuario es admin de esta familia
     const { data: profile } = await supabase
       .from('profiles')
       .select('role, family_id')
@@ -31,11 +30,15 @@ export async function POST(req: NextRequest) {
       .single()
 
     if (profile?.family_id !== family_id || profile?.role !== 'admin') {
-      return NextResponse.json({ error: 'Solo el administrador puede enviar notificaciones' }, { status: 403 })
+      return NextResponse.json(
+        { error: 'Solo el administrador puede enviar notificaciones' },
+        { status: 403 }
+      )
     }
 
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
+    const now = new Date().toISOString()
 
     const { data: members } = await supabase
       .from('profiles')
@@ -47,16 +50,42 @@ export async function POST(req: NextRequest) {
     }
 
     for (const member of members) {
-      await supabase
+      // Obtener el registro más reciente del miembro (si existe)
+      const { data: existing } = await supabase
         .from('user_preferences')
-        .upsert({
-          profile_id: member.id,
-          family_id,
-          week_number: weekNumber,
-          year,
-          notified_at: new Date().toISOString(),
-          preferences_completed: false,
-        }, { onConflict: 'profile_id,week_number,year' })
+        .select('id, preferences_completed')
+        .eq('profile_id', member.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (existing) {
+        if (existing.preferences_completed) {
+          // Ya completó — solo actualizar notified_at, sin cambiar su estado
+          await supabase
+            .from('user_preferences')
+            .update({ notified_at: now })
+            .eq('id', existing.id)
+        } else {
+          // Pendiente — refrescar notified_at para asegurar redirección
+          await supabase
+            .from('user_preferences')
+            .update({ notified_at: now, week_number: weekNumber, year })
+            .eq('id', existing.id)
+        }
+      } else {
+        // Sin registro previo — crear uno nuevo para esta semana
+        await supabase
+          .from('user_preferences')
+          .insert({
+            profile_id: member.id,
+            family_id,
+            week_number: weekNumber,
+            year,
+            notified_at: now,
+            preferences_completed: false,
+          })
+      }
     }
 
     return NextResponse.json({ success: true, notified: members.length })

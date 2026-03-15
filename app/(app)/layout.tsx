@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { createClient } from '@/lib/supabase/server'
 import { BottomNav } from '@/components/layout/BottomNav'
+import { NotificacionGuard } from '@/components/guards/NotificacionGuard'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const supabase = await createClient()
@@ -12,6 +13,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="app-layout">
+      <NotificacionGuard />
       <main className="app-main">
         {children}
       </main>

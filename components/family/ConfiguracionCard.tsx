@@ -98,7 +98,7 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
         body: JSON.stringify({ family_id: family.id }),
       })
       if (!res.ok) throw new Error()
-      toast.success('Notificación enviada a tu familia.')
+      toast.success('✅ Notificación enviada — los miembros serán redirigidos a llenar sus preferencias')
     } catch {
       toast.error('No se pudo enviar la notificación.')
     } finally {
