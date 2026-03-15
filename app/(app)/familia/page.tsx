@@ -63,6 +63,7 @@ export default function FamiliaPage() {
   const [matchMode, setMatchMode] = useState<string>('full')
   const [actionLoading, setActionLoading] = useState(false)
   const [memberPrefsStatus, setMemberPrefsStatus] = useState<Record<string, boolean>>({})
+  const [mealsByCategory, setMealsByCategory] = useState<Record<string, number>>({})
 
   const toast = useToast()
   const router = useRouter()
@@ -99,7 +100,7 @@ export default function FamiliaPage() {
       const year = new Date().getFullYear()
       const weekStart = toDateString(getWeekStart())
 
-      const [{ data: membersData }, { data: weeklyMenuData }, { data: votingStatus }, { data: preferencesData }] = await Promise.all([
+      const [{ data: membersData }, { data: weeklyMenuData }, { data: votingStatus }, { data: preferencesData }, { data: mealsData }] = await Promise.all([
         supabase
           .from('profiles')
           .select('id, name, role')
@@ -122,6 +123,10 @@ export default function FamiliaPage() {
           .select('profile_id, preferences_completed')
           .eq('family_id', profile.family_id)
           .eq('preferences_completed', true),
+        supabase
+          .from('meals')
+          .select('category')
+          .eq('family_id', profile.family_id),
       ])
 
       const membersList = (membersData ?? []) as MemberData[]
@@ -135,6 +140,13 @@ export default function FamiliaPage() {
         statusMap[member.id] = !!completado
       }
       setMemberPrefsStatus(statusMap)
+
+      // Contar comidas disponibles por categoría
+      const countByCategory: Record<string, number> = {}
+      for (const meal of mealsData ?? []) {
+        countByCategory[meal.category] = (countByCategory[meal.category] ?? 0) + 1
+      }
+      setMealsByCategory(countByCategory)
 
       // Conteos directamente del weekly_menu (fuente de verdad)
       const entries = weeklyMenuData ?? []
@@ -191,27 +203,41 @@ export default function FamiliaPage() {
     }
   }
 
+  // Umbral: si una categoría tiene menos de 6 recetas sin match, necesita más opciones para votar
+  const UNVOTED_THRESHOLD = 6
+  const matched = {
+    desayuno: menuProgress?.desayunos ?? 0,
+    comida:   menuProgress?.comidas   ?? 0,
+    cena:     menuProgress?.cenas     ?? 0,
+  }
+  const categoriasConPocasOpciones = (['desayuno', 'comida', 'cena'] as const).filter(
+    (cat) => (mealsByCategory[cat] ?? 0) - matched[cat] < UNVOTED_THRESHOLD
+  )
+  const labelGenerarBtn = categoriasConPocasOpciones.length > 0
+    ? 'Generar más recetas para votar'
+    : 'Generar recetas adicionales'
+
   const handleGenerarMasRecetas = async () => {
-    if (!family || !menuProgress) return
+    if (!family) return
     setActionLoading(true)
     try {
-      const missing: string[] = []
-      if (menuProgress.desayunos < 7) missing.push('desayuno')
-      if (menuProgress.comidas   < 7) missing.push('comida')
-      if (menuProgress.cenas     < 7) missing.push('cena')
+      const categoriasAGenerar = categoriasConPocasOpciones.length > 0
+        ? [...categoriasConPocasOpciones]
+        : ['desayuno', 'comida', 'cena']
 
       const res = await fetch('/api/generar-recetas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ family_id: family.id, only_categories: missing }),
+        body: JSON.stringify({ family_id: family.id, only_categories: categoriasAGenerar }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error)
 
       if (data.total === 0) {
-        toast.success('El menú ya está completo en esas categorías.')
+        toast.success('No se generaron recetas nuevas.')
       } else {
         toast.success(`Se generaron ${data.total} recetas nuevas para votar ✨`)
+        await loadFamilyData()
       }
     } catch (err) {
       console.error(err)
@@ -355,48 +381,50 @@ export default function FamiliaPage() {
               ))}
             </div>
 
-            {/* Acciones cuando el menú no está completo */}
-            {totalMatches < 21 && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button
-                  className="btn-primary"
-                  onClick={handleGenerarMasRecetas}
-                  disabled={actionLoading}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-                >
-                  <Sparkles style={{ width: 16, height: 16 }} />
-                  Generar más recetas para votar
-                </button>
+            {/* Acciones */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <button
+                className={totalMatches < 21 ? 'btn-primary' : 'btn-ghost'}
+                onClick={handleGenerarMasRecetas}
+                disabled={actionLoading}
+                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+              >
+                <Sparkles style={{ width: 16, height: 16 }} />
+                {actionLoading ? 'Generando...' : labelGenerarBtn}
+              </button>
 
-                <button
-                  className="btn-ghost"
-                  onClick={handleActivarMayoria}
-                  disabled={actionLoading || matchMode === 'majority'}
-                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-                >
-                  <Users style={{ width: 16, height: 16 }} />
-                  {matchMode === 'majority'
-                    ? 'Match con mayoría activado'
-                    : 'Activar match con mayoría (3/4)'}
-                </button>
-
-                {totalMatches >= 16 && (
+              {totalMatches < 21 && (
+                <>
                   <button
                     className="btn-ghost"
-                    onClick={handleCompletarAuto}
-                    disabled={actionLoading}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      borderColor: 'rgba(96,165,250,0.35)',
-                      color: 'var(--blue)',
-                    }}
+                    onClick={handleActivarMayoria}
+                    disabled={actionLoading || matchMode === 'majority'}
+                    style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                   >
-                    <Bot style={{ width: 16, height: 16 }} />
-                    Completar menú automáticamente
+                    <Users style={{ width: 16, height: 16 }} />
+                    {matchMode === 'majority'
+                      ? 'Match con mayoría activado'
+                      : 'Activar match con mayoría (3/4)'}
                   </button>
-                )}
-              </div>
-            )}
+
+                  {totalMatches >= 16 && (
+                    <button
+                      className="btn-ghost"
+                      onClick={handleCompletarAuto}
+                      disabled={actionLoading}
+                      style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                        borderColor: 'rgba(96,165,250,0.35)',
+                        color: 'var(--blue)',
+                      }}
+                    >
+                      <Bot style={{ width: 16, height: 16 }} />
+                      Completar menú automáticamente
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
 
             {/* Menú completo */}
             {totalMatches === 21 && (
