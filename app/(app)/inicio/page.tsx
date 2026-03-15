@@ -175,7 +175,7 @@ export default function InicioPage() {
         // Estado 6: lista de compras pendiente de usar
         return (
           <Link href="/menu/lista" className="shopping-task-card" style={{ textDecoration: 'none' }}>
-            <span className="shopping-task-icon">🛒</span>
+            <span className="shopping-task-icon"><ShoppingCart style={{ width: 22, height: 22 }} /></span>
             <div className="shopping-task-info">
               <p className="shopping-task-title">Lista de compras lista</p>
               <p className="shopping-task-sub">
@@ -189,7 +189,10 @@ export default function InicioPage() {
       // Estado 5: menú completo
       return (
         <div className="estado-card estado-card-green">
-          <p className="estado-card-title">✅ Menú de la semana listo</p>
+          <p className="estado-card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <CheckSquare style={{ width: 16, height: 16, color: 'var(--green)' }} />
+            Menú de la semana listo
+          </p>
           <p className="estado-card-subtitle">
             Las 21 comidas están planeadas
           </p>
@@ -235,7 +238,10 @@ export default function InicioPage() {
       // Estado 4: votando
       return (
         <div className="estado-card estado-card-amber">
-          <p className="estado-card-title">🗳️ Votando el menú</p>
+          <p className="estado-card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Vote style={{ width: 16, height: 16, color: 'var(--amber)' }} />
+            Votando el menú
+          </p>
           <div className="voting-categories" style={{ marginTop: 4 }}>
             {[
               { label: 'Desayunos', count: votingProgress.desayunos },
@@ -277,7 +283,10 @@ export default function InicioPage() {
     // Estado 3: listo para votar
     return (
       <div className="estado-card estado-card-green">
-        <p className="estado-card-title">🗳️ ¡Hora de votar!</p>
+          <p className="estado-card-title" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Vote style={{ width: 16, height: 16, color: 'var(--green)' }} />
+            ¡Hora de votar!
+          </p>
         <p className="estado-card-subtitle">
           Ya están listas las recetas de esta semana. ¡Empieza a votar!
         </p>

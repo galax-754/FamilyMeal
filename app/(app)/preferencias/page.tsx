@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ChevronRight } from 'lucide-react'
+import { Check, ChevronRight, Activity, Leaf } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
@@ -19,12 +19,12 @@ interface FormState {
 }
 
 const AVOID_OPTIONS = [
-  { id: 'mariscos',    label: 'Mariscos',    emoji: '🦐' },
-  { id: 'gluten',      label: 'Gluten',      emoji: '🌾' },
-  { id: 'lacteos',     label: 'Lácteos',     emoji: '🥛' },
-  { id: 'picante',     label: 'Picante',     emoji: '🌶️' },
-  { id: 'cerdo',       label: 'Cerdo',       emoji: '🐷' },
-  { id: 'res',         label: 'Res',         emoji: '🐄' },
+  { id: 'mariscos', label: 'Mariscos' },
+  { id: 'gluten',   label: 'Gluten'   },
+  { id: 'lacteos',  label: 'Lácteos'  },
+  { id: 'picante',  label: 'Picante'  },
+  { id: 'cerdo',    label: 'Cerdo'    },
+  { id: 'res',      label: 'Res'      },
 ]
 
 const PREP_TIMES = [
@@ -168,9 +168,9 @@ export default function PreferenciasPage() {
           <h3 className="section-title mb-12">Dieta especial</h3>
           <div className="card stack-3">
             {[
-              { key: 'is_diabetic' as const, label: 'Soy diabético/a', emoji: '🩺' },
-              { key: 'is_vegetarian' as const, label: 'Soy vegetariano/a', emoji: '🥦' },
-            ].map(({ key, label, emoji }) => (
+              { key: 'is_diabetic' as const,   label: 'Soy diabético/a',   Icon: Activity },
+              { key: 'is_vegetarian' as const, label: 'Soy vegetariano/a', Icon: Leaf },
+            ].map(({ key, label, Icon }) => (
               <button
                 key={key}
                 onClick={() => setForm((prev) => ({ ...prev, [key]: !prev[key] }))}
@@ -188,7 +188,9 @@ export default function PreferenciasPage() {
                   borderBottom: '1px solid var(--border)',
                 }}
               >
-                <span style={{ fontSize: 22, width: 30, textAlign: 'center' }}>{emoji}</span>
+                <span style={{ width: 30, display: 'flex', justifyContent: 'center' }}>
+                  <Icon style={{ width: 20, height: 20, color: 'var(--muted)' }} />
+                </span>
                 <span style={{ flex: 1, fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{label}</span>
                 <div
                   style={{
@@ -212,7 +214,7 @@ export default function PreferenciasPage() {
         <section>
           <h3 className="section-title mb-12">Alimentos que evito</h3>
           <div className="pref-option-grid">
-            {AVOID_OPTIONS.map(({ id, label, emoji }) => {
+            {AVOID_OPTIONS.map(({ id, label }) => {
               const selected = form.avoid_foods.includes(id)
               return (
                 <button
@@ -220,7 +222,6 @@ export default function PreferenciasPage() {
                   onClick={() => toggleAvoid(id)}
                   className={`pref-option-btn${selected ? ' selected' : ''}`}
                 >
-                  <span className="pref-option-emoji">{emoji}</span>
                   {label}
                 </button>
               )

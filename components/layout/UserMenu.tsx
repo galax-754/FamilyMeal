@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { LogOut } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
@@ -109,7 +110,8 @@ export function UserMenu() {
                 gap: 8,
               }}
             >
-              🚪 Cerrar sesión
+              <LogOut style={{ width: 14, height: 14 }} />
+              Cerrar sesión
             </button>
           </div>
         </>

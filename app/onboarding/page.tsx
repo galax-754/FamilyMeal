@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { Utensils, Crown, Link2, ArrowLeft } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 
@@ -121,7 +122,14 @@ export default function OnboardingPage() {
 
       {/* Logo */}
       <div style={{ textAlign: 'center', marginBottom: 40 }}>
-        <div style={{ fontSize: 52, marginBottom: 12 }}>🍽️</div>
+        <div style={{
+          width: 64, height: 64, borderRadius: '50%',
+          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          margin: '0 auto 12px',
+        }}>
+          <Utensils style={{ width: 28, height: 28, color: '#000' }} />
+        </div>
         <h1 style={{
           fontSize: 28,
           fontWeight: 900,
@@ -152,29 +160,45 @@ export default function OnboardingPage() {
 
           <div
             className="card"
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14 }}
             onClick={() => setStep('crear')}
           >
-            <div style={{ fontSize: 32, marginBottom: 8 }}>👑</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
-              Crear mi familia
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Crown style={{ width: 20, height: 20, color: 'var(--amber)' }} />
             </div>
-            <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-              Soy el administrador. Invitaré a mi familia después.
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
+                Crear mi familia
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                Soy el administrador. Invitaré a mi familia después.
+              </div>
             </div>
           </div>
 
           <div
             className="card"
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14 }}
             onClick={() => setStep('unirse')}
           >
-            <div style={{ fontSize: 32, marginBottom: 8 }}>🔗</div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>
-              Unirme a una familia
+            <div style={{
+              width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+              background: 'rgba(96,165,250,0.1)', border: '1px solid rgba(96,165,250,0.25)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Link2 style={{ width: 20, height: 20, color: 'var(--blue)' }} />
             </div>
-            <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-              Tengo un link de invitación de mi familia.
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
+                Unirme a una familia
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                Tengo un link de invitación de mi familia.
+              </div>
             </div>
           </div>
         </div>
@@ -186,18 +210,13 @@ export default function OnboardingPage() {
           <button
             onClick={handleBack}
             style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--amber)',
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginBottom: 20,
-              padding: 0,
-              fontFamily: 'Inter, sans-serif',
+              background: 'none', border: 'none', color: 'var(--amber)',
+              fontSize: 14, fontWeight: 600, cursor: 'pointer',
+              marginBottom: 20, padding: 0, fontFamily: 'Inter, sans-serif',
+              display: 'flex', alignItems: 'center', gap: 4,
             }}
           >
-            ← Volver
+            <ArrowLeft style={{ width: 14, height: 14 }} /> Volver
           </button>
 
           <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', marginBottom: 20 }}>
@@ -248,18 +267,13 @@ export default function OnboardingPage() {
           <button
             onClick={handleBack}
             style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--amber)',
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-              marginBottom: 20,
-              padding: 0,
-              fontFamily: 'Inter, sans-serif',
+              background: 'none', border: 'none', color: 'var(--amber)',
+              fontSize: 14, fontWeight: 600, cursor: 'pointer',
+              marginBottom: 20, padding: 0, fontFamily: 'Inter, sans-serif',
+              display: 'flex', alignItems: 'center', gap: 4,
             }}
           >
-            ← Volver
+            <ArrowLeft style={{ width: 14, height: 14 }} /> Volver
           </button>
 
           <h2 style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)', marginBottom: 8 }}>

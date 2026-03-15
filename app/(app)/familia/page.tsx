@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Copy, Check, LogOut, Crown, Users, Share2 } from 'lucide-react'
+import { Copy, Check, LogOut, Crown, Users, Share2, Sparkles, Bot, Sunrise, Sun, Moon, CheckCircle2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
@@ -219,7 +219,7 @@ export default function FamiliaPage() {
 
       setMatchMode('majority')
       if (data.new_matches > 0) {
-        toast.success(`¡Se encontraron ${data.new_matches} matches nuevos con mayoría! 👥`)
+        toast.success(`Se encontraron ${data.new_matches} matches nuevos con mayoría`)
         await loadFamilyData()
       } else {
         toast.success('Match con mayoría activado. Los próximos votos usarán este criterio.')
@@ -245,7 +245,7 @@ export default function FamiliaPage() {
       if (!res.ok) throw new Error(data.error)
 
       if (data.assigned > 0) {
-        toast.success(`¡Se asignaron ${data.assigned} comidas automáticamente! 🤖`)
+        toast.success(`Se asignaron ${data.assigned} comidas automáticamente`)
         await loadFamilyData()
       } else {
         toast.success('No había recetas con votos suficientes para asignar.')
@@ -303,18 +303,18 @@ export default function FamiliaPage() {
               </div>
 
               {[
-                { label: 'Desayunos', matched: menuProgress!.desayunos, emoji: '🌅' },
-                { label: 'Comidas',   matched: menuProgress!.comidas,   emoji: '☀️' },
-                { label: 'Cenas',     matched: menuProgress!.cenas,     emoji: '🌙' },
-              ].map(({ label, matched, emoji }) => (
+                { label: 'Desayunos', matched: menuProgress!.desayunos, Icon: Sunrise },
+                { label: 'Comidas',   matched: menuProgress!.comidas,   Icon: Sun },
+                { label: 'Cenas',     matched: menuProgress!.cenas,     Icon: Moon },
+              ].map(({ label, matched, Icon }) => (
                 <div key={label} style={{ marginBottom: '10px' }}>
                   <div style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     marginBottom: 4,
                   }}>
-                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                      {emoji} {label}
+                    <span style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Icon style={{ width: 12, height: 12 }} /> {label}
                     </span>
                     <span style={{
                       fontSize: 12,
@@ -346,17 +346,21 @@ export default function FamiliaPage() {
                   className="btn-primary"
                   onClick={handleGenerarMasRecetas}
                   disabled={actionLoading}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                 >
-                  ✨ Generar más recetas para votar
+                  <Sparkles style={{ width: 16, height: 16 }} />
+                  Generar más recetas para votar
                 </button>
 
                 <button
                   className="btn-ghost"
                   onClick={handleActivarMayoria}
                   disabled={actionLoading || matchMode === 'majority'}
+                  style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
                 >
-                  👥 {matchMode === 'majority'
-                    ? 'Match con mayoría activado ✓'
+                  <Users style={{ width: 16, height: 16 }} />
+                  {matchMode === 'majority'
+                    ? 'Match con mayoría activado'
                     : 'Activar match con mayoría (3/4)'}
                 </button>
 
@@ -366,11 +370,13 @@ export default function FamiliaPage() {
                     onClick={handleCompletarAuto}
                     disabled={actionLoading}
                     style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                       borderColor: 'rgba(96,165,250,0.35)',
                       color: 'var(--blue)',
                     }}
                   >
-                    🤖 Completar menú automáticamente
+                    <Bot style={{ width: 16, height: 16 }} />
+                    Completar menú automáticamente
                   </button>
                 )}
               </div>
@@ -387,7 +393,7 @@ export default function FamiliaPage() {
                 borderRadius: 'var(--r-sm)',
                 border: '1px solid rgba(34,197,94,0.2)',
               }}>
-                <span style={{ fontSize: 24 }}>🎉</span>
+                <CheckCircle2 style={{ width: 28, height: 28, color: 'var(--green)', flexShrink: 0 }} />
                 <div>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)' }}>
                     ¡Menú completo!
