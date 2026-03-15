@@ -132,6 +132,7 @@ export default function PreferenciasPage() {
             week_number: semana,
             year: anio,
             ...form,
+            preferences_completed: true,
             completed_at: new Date().toISOString(),
           },
           { onConflict: 'profile_id,week_number,year' }

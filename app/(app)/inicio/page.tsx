@@ -5,15 +5,24 @@ import Link from 'next/link'
 import {
   CalendarDays, CheckSquare, UtensilsCrossed, ChevronRight,
   Utensils, Sunrise, Sun, Moon, type LucideIcon,
-  ShoppingCart, Vote, Loader2,
+  ShoppingCart, Vote,
 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { MealCardSkeleton } from '@/components/ui/Skeleton'
 import { FamilySetup } from '@/components/family/FamilySetup'
+import { NotificacionModal } from '@/components/onboarding/NotificacionModal'
+import { EsperandoAdmin } from '@/components/onboarding/EsperandoAdmin'
 import { createClient } from '@/lib/supabase/client'
 import { Profile, Meal, Chore, WeeklyMenu } from '@/types'
 import { getWeekStart, toDateString, DIAS, MEAL_TYPES } from '@/lib/utils'
 import { getWeekNumber } from '@/lib/votes'
+
+type FlowState =
+  | 'cargando'
+  | 'notificacion_pendiente'
+  | 'esperando_admin'
+  | 'listo_para_votar'
+  | 'dashboard'
 
 interface VotingProgress {
   desayunos: number
@@ -38,6 +47,12 @@ export default function InicioPage() {
   const [budgetGastado, setBudgetGastado] = useState(0)
   const [votingProgress, setVotingProgress] = useState<VotingProgress | null>(null)
   const [shoppingList, setShoppingList] = useState<ShoppingList | null>(null)
+
+  // Flujo semanal
+  const [flowState, setFlowState] = useState<FlowState>('cargando')
+  const [adminName, setAdminName] = useState('el administrador')
+  const [showNotifModal, setShowNotifModal] = useState(false)
+  const [weeklyStatus, setWeeklyStatus] = useState<{ recipes_generated?: boolean } | null>(null)
 
   const supabase = createClient()
 
@@ -75,6 +90,9 @@ export default function InicioPage() {
         { data: chores },
         { data: meals },
         { data: shopping },
+        { data: adminData },
+        { data: prefs },
+        { data: votingStatus },
       ] = await Promise.all([
         supabase
           .from('weekly_menu')
@@ -111,10 +129,34 @@ export default function InicioPage() {
           .eq('week_number', semana)
           .eq('year', anio)
           .maybeSingle(),
+        supabase
+          .from('profiles')
+          .select('name')
+          .eq('family_id', prof.family_id)
+          .eq('role', 'admin')
+          .single(),
+        supabase
+          .from('user_preferences')
+          .select('preferences_completed, notified_at')
+          .eq('profile_id', user.id)
+          .eq('week_number', semana)
+          .eq('year', anio)
+          .maybeSingle(),
+        supabase
+          .from('weekly_voting_status')
+          .select('recipes_generated, voting_started, desayunos_matched, comidas_matched, cenas_matched, menu_completed')
+          .eq('family_id', prof.family_id)
+          .eq('week_number', semana)
+          .eq('year', anio)
+          .maybeSingle(),
       ])
 
       setTodayMenu(menu ?? [])
       setPendingChores(chores ?? [])
+      setWeeklyStatus(votingStatus)
+
+      const adminNameValue = adminData?.name || 'el administrador'
+      setAdminName(adminNameValue)
 
       if (fam?.budget_weekly) {
         setBudgetTotal(fam.budget_weekly)
@@ -134,7 +176,6 @@ export default function InicioPage() {
         setTopMeals(scored.slice(0, 3))
       }
 
-      // Progreso de votación semanal
       const entries = weekMenu ?? []
       setVotingProgress({
         desayunos: entries.filter((e) => e.meal_type === 'desayuno').length,
@@ -143,12 +184,41 @@ export default function InicioPage() {
       })
 
       setShoppingList(shopping as ShoppingList | null)
+
+      // ── Determinar estado del flujo ──────────────────
+      // Admin siempre ve el dashboard normal
+      if (prof.role === 'admin') {
+        setFlowState('dashboard')
+        return
+      }
+
+      // Miembro: seguir flujo bloqueado
+      if (prefs?.preferences_completed) {
+        // Ya llenó preferencias — verificar si hay recetas
+        if (votingStatus?.recipes_generated) {
+          setFlowState('listo_para_votar')
+        } else {
+          setFlowState('esperando_admin')
+        }
+      } else if (prefs?.notified_at) {
+        // Fue notificado pero aún no llenó preferencias
+        setShowNotifModal(true)
+        setFlowState('notificacion_pendiente')
+      } else {
+        // Sin notificación — mostrar dashboard normal
+        setFlowState('dashboard')
+      }
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => { load() }, [])
+
+  const handleContinuarNotif = () => {
+    setShowNotifModal(false)
+    window.location.href = '/preferencias'
+  }
 
   if (needsFamily && profile) {
     return (
@@ -158,6 +228,21 @@ export default function InicioPage() {
       />
     )
   }
+
+  // Pantalla de espera al admin (preferencias completadas, sin recetas aún)
+  if (flowState === 'esperando_admin' && profile) {
+    return (
+      <EsperandoAdmin
+        familyId={profile.family_id!}
+        adminName={adminName}
+        memberName={profile.name || 'tú'}
+        onRecetasListas={() => setFlowState('listo_para_votar')}
+      />
+    )
+  }
+
+  // Fue notificado pero no llenó preferencias — mostrar modal sobre dashboard
+  // (el modal se superpone mientras espera que el usuario haga clic)
 
   const today = new Date()
   const dayName = DIAS[today.getDay() === 0 ? 6 : today.getDay() - 1]
@@ -169,6 +254,9 @@ export default function InicioPage() {
   // Determinar el estado semanal actual
   const getEstadoCard = () => {
     if (!votingProgress) return null
+
+    // Solo mostrar tarjeta de votar si el admin ya generó recetas
+    if (!weeklyStatus?.recipes_generated && !menuCompleto) return null
 
     if (menuCompleto) {
       if (shoppingList) {
@@ -313,6 +401,52 @@ export default function InicioPage() {
 
   return (
     <div>
+      {showNotifModal && (
+        <NotificacionModal
+          adminName={adminName}
+          familyName={(profile as unknown as { families?: { name?: string } })?.families?.name || 'tu familia'}
+          onContinuar={handleContinuarNotif}
+        />
+      )}
+
+      {flowState === 'listo_para_votar' && (
+        <div style={{
+          margin: '0 0 16px',
+          padding: '16px 20px',
+          background: 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(253,230,138,0.08))',
+          border: '1px solid rgba(245,158,11,0.35)',
+          borderRadius: 'var(--r)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+        }}>
+          <span style={{ fontSize: '28px' }}>🗳️</span>
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)', marginBottom: '2px' }}>
+              ¡Es hora de votar!
+            </p>
+            <p style={{ fontSize: '12px', color: 'var(--muted)' }}>
+              Las recetas de la semana ya están listas
+            </p>
+          </div>
+          <a
+            href="/comidas?modo=votar"
+            style={{
+              padding: '8px 14px',
+              background: 'var(--amber)',
+              color: '#000',
+              borderRadius: 'var(--r-sm)',
+              fontWeight: 700,
+              fontSize: '13px',
+              textDecoration: 'none',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Votar →
+          </a>
+        </div>
+      )}
+
       <PageHeader
         title="FamilyMeal"
         subtitle={`${dayName}, ${today.toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })}`}
