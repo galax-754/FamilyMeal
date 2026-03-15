@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
       .eq('family_id', family_id)
       .eq('week_number', weekNumber)
       .eq('year', year)
-      .eq('vote', true)
+      .eq('vote', 1)
 
     const uniqueMealIds = [...new Set(votedMeals?.map((v) => v.meal_id) ?? [])]
     let newMatches = 0

@@ -536,8 +536,12 @@ export default function PreferenciasPage() {
 }
 
 function getWeekNumber(date: Date): number {
-  const firstDayOfYear = new Date(date.getFullYear(), 0, 1)
-  const pastDaysOfYear =
-    (date.getTime() - firstDayOfYear.getTime()) / 86400000
-  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7)
+  // El domingo ya es semana nueva: Dom–Sáb en vez de Lun–Dom (ISO)
+  const d = new Date(date)
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1)
+  const dUTC = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = dUTC.getUTCDay() || 7
+  dUTC.setUTCDate(dUTC.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(dUTC.getUTCFullYear(), 0, 1))
+  return Math.ceil((((dUTC.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
 }

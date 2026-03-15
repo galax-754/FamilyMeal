@@ -12,11 +12,14 @@ const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY })
 const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 function getWeekNumber(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
-  const dayNum = d.getUTCDay() || 7
-  d.setUTCDate(d.getUTCDate() + 4 - dayNum)
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1))
-  return Math.ceil((((d.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
+  // El domingo ya es semana nueva: Dom–Sáb en vez de Lun–Dom (ISO)
+  const d = new Date(date)
+  if (d.getDay() === 0) d.setDate(d.getDate() + 1)
+  const dUTC = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = dUTC.getUTCDay() || 7
+  dUTC.setUTCDate(dUTC.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(dUTC.getUTCFullYear(), 0, 1))
+  return Math.ceil((((dUTC.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
