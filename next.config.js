@@ -4,15 +4,13 @@ const nextConfig = {
   typescript: { ignoreBuildErrors: true },
   images: {
     remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: '*.supabase.co',
-        pathname: '/storage/v1/object/public/**',
-      },
-      {
-        protocol: 'https',
-        hostname: 'images.unsplash.com',
-      },
+      { protocol: 'https', hostname: 'images.unsplash.com' },
+      { protocol: 'https', hostname: '*.supabase.co' },
+      { protocol: 'https', hostname: '*.googleusercontent.com' },
+      { protocol: 'https', hostname: '*.blogspot.com' },
+      { protocol: 'https', hostname: '*.wordpress.com' },
+      { protocol: 'https', hostname: '*.kiwilimon.com' },
+      { protocol: 'https', hostname: '**' },
     ],
   },
 }

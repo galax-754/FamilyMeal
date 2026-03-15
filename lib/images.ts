@@ -1,59 +1,57 @@
-const UNSPLASH_KEY = process.env.UNSPLASH_ACCESS_KEY
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY
+const GOOGLE_SEARCH_ENGINE_ID = process.env.GOOGLE_SEARCH_ENGINE_ID
 
-// Traducciones de comida mexicana → inglés para mejor búsqueda en Unsplash
 const FOOD_TRANSLATIONS: Record<string, string> = {
-  'nopales': 'mexican cactus salad',
-  'pozole': 'mexican pozole soup',
-  'enchiladas': 'mexican enchiladas',
-  'tamales': 'mexican tamales',
-  'chilaquiles': 'mexican chilaquiles',
-  'tlalpeño': 'mexican chicken soup',
-  'lentejas': 'lentil soup',
-  'frijoles': 'mexican black beans tacos',
-  'avena': 'oatmeal with fruit breakfast',
-  'omelette': 'omelette spinach healthy',
-  'pollo': 'grilled chicken herbs',
-  'salmón': 'salmon fillet healthy',
-  'tilapia': 'tilapia fish healthy',
-  'atún': 'tuna stuffed pepper',
-  'ensalada': 'chicken salad spinach',
-  'champiñones': 'chicken mushrooms pan',
-  'caldo': 'mexican chicken broth soup',
-  'chile relleno': 'stuffed poblano pepper',
-  'tacos': 'mexican tacos healthy',
-  'sopa': 'homemade soup healthy',
+  'chilaquiles': 'chilaquiles verdes mexicanos',
+  'tacos': 'tacos mexicanos caseros',
+  'sopa': 'sopa mexicana casera',
+  'arroz': 'arroz rojo mexicano',
+  'pollo': 'pollo guisado mexicano',
+  'pescado': 'tacos de pescado',
+  'enchiladas': 'enchiladas verdes mexicanas',
+  'pozole': 'pozole rojo mexicano',
+  'nopales': 'nopales con huevo mexicano',
+  'frijoles': 'frijoles negros mexicanos',
+  'huevo': 'huevos rancheros mexicanos',
+  'caldo': 'caldo de pollo mexicano',
+  'res': 'carne de res guisada mexicana',
+  'cerdo': 'carnitas mexicanas',
+  'tamales': 'tamales mexicanos',
+  'quesadilla': 'quesadillas mexicanas',
+  'flautas': 'flautas mexicanas',
+  'mole': 'mole con pollo mexicano',
+  'empanizado': 'filete empanizado crujiente',
+  'ensalada': 'ensalada fresca saludable',
+  'lentejas': 'sopa de lentejas mexicana',
+  'calabaza': 'calabaza guisada mexicana',
+  'milanesa': 'milanesa de res mexicana',
+  'bistek': 'bistek a la mexicana',
+  'gorditas': 'gorditas mexicanas',
+  'avena': 'avena con frutas desayuno',
+  'omelette': 'omelette desayuno saludable',
 }
 
-export function buildSearchQuery(mealName: string, category: string): string {
+export function buildSearchQuery(
+  mealName: string,
+  category: string
+): string {
   const nameLower = mealName.toLowerCase()
 
-  for (const [spanish, english] of Object.entries(FOOD_TRANSLATIONS)) {
+  for (const [spanish, query] of Object.entries(FOOD_TRANSLATIONS)) {
     if (nameLower.includes(spanish)) {
-      return `${english} food photography`
+      return `${query} platillo comida`
     }
   }
 
-  const categoryMap: Record<string, string> = {
-    'desayuno': 'breakfast',
-    'comida': 'lunch dinner',
-    'cena': 'dinner',
-    'snack': 'snack',
-    // mayúsculas por si acaso
-    'Desayuno': 'breakfast',
-    'Comida': 'lunch dinner',
-    'Cena': 'dinner',
-  }
-
-  const categoryEn = categoryMap[category] || 'food'
-  return `${mealName} mexican food ${categoryEn} photography`
+  return `${mealName} comida mexicana casera platillo`
 }
 
 export async function searchFoodImage(
   mealName: string,
   category: string
 ): Promise<string | null> {
-  if (!UNSPLASH_KEY) {
-    console.warn('UNSPLASH_ACCESS_KEY no configurada, usando imagen de respaldo')
+  if (!GOOGLE_API_KEY || !GOOGLE_SEARCH_ENGINE_ID) {
+    console.warn('Google Search keys no configuradas')
     return getFallbackImage(category)
   }
 
@@ -61,43 +59,63 @@ export async function searchFoodImage(
     const query = buildSearchQuery(mealName, category)
     const encodedQuery = encodeURIComponent(query)
 
-    const res = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodedQuery}&per_page=5&orientation=landscape&content_filter=high`,
-      {
-        headers: {
-          Authorization: `Client-ID ${UNSPLASH_KEY}`,
-        },
-        next: { revalidate: 86400 }, // cache 24h para no agotar quota
-      }
-    )
+    const url =
+      `https://www.googleapis.com/customsearch/v1` +
+      `?key=${GOOGLE_API_KEY}` +
+      `&cx=${GOOGLE_SEARCH_ENGINE_ID}` +
+      `&q=${encodedQuery}` +
+      `&searchType=image` +
+      `&num=5` +
+      `&imgSize=large` +
+      `&imgType=photo` +
+      `&safe=active`
+
+    const res = await fetch(url, {
+      next: { revalidate: 86400 }, // cache 24 horas
+    })
 
     if (!res.ok) {
-      console.error('Error Unsplash:', res.status, res.statusText)
+      console.error('Google Search error:', res.status)
       return getFallbackImage(category)
     }
 
     const data = await res.json()
 
-    if (!data.results || data.results.length === 0) {
+    if (!data.items || data.items.length === 0) {
+      console.log('Sin resultados para:', query)
       return getFallbackImage(category)
     }
 
-    // Usar la primera foto — tamaño regular (1080px), buen balance calidad/velocidad
-    return data.results[0].urls.regular as string
+    // Priorizar resultados de blogs de recetas
+    const foodSites = [
+      'kiwilimon', 'recetas', 'cocina', 'food',
+      'comida', 'gastro', 'chef', 'platillo',
+    ]
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const bestResult = data.items.find((item: any) =>
+      foodSites.some(
+        (site) =>
+          item.displayLink?.toLowerCase().includes(site) ||
+          item.title?.toLowerCase().includes(site)
+      )
+    ) || data.items[0]
+
+    return bestResult.link as string
   } catch (error) {
-    console.error('Error buscando imagen en Unsplash:', error)
+    console.error('Error buscando imagen:', error)
     return getFallbackImage(category)
   }
 }
 
 function getFallbackImage(category: string): string {
   const fallbacks: Record<string, string> = {
-    'desayuno': 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=800',
-    'Desayuno': 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=800',
-    'comida': 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
-    'Comida': 'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
-    'cena': 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800',
-    'Cena': 'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800',
+    Desayuno: 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=800',
+    desayuno: 'https://images.unsplash.com/photo-1533089860892-a7c6f0a88666?w=800',
+    Comida:   'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
+    comida:   'https://images.unsplash.com/photo-1547592166-23ac45744acd?w=800',
+    Cena:     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800',
+    cena:     'https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800',
   }
   return fallbacks[category] ?? fallbacks['comida']
 }

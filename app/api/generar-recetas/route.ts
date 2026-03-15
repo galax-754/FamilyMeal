@@ -107,17 +107,32 @@ export async function POST(request: NextRequest) {
     const weekNumber  = getWeekNumber(new Date())
 
     // Una sola llamada: 3 recetas (1 desayuno, 1 comida, 1 cena)
-    const prompt = `Eres chef mexicano profesional.
-Genera exactamente 3 recetas para familia mexicana:
-1 Desayuno, 1 Comida, 1 Cena.
+    const prompt = `Eres chef profesional especializado en nutrición.
+Genera exactamente 3 recetas: 1 Desayuno, 1 Comida, 1 Cena.
 
 FAMILIA:
 - Usa ingredientes económicos disponibles en HEB México. La familia tiene $${budgetWeekly > 0 ? budgetWeekly : 2500} MXN semanales para todas las comidas.
 - Les gusta: ${Array.from(allLikes).slice(0, 8).join(', ') || 'variado'}
 - No les gusta: ${Array.from(allDislikes).slice(0, 5).join(', ') || 'ninguno'}
 - Alergias: ${Array.from(allAllergies).join(', ') || 'ninguna'}
-${hasDiabetic ? '- Todas deben ser aptas para diabéticos' : ''}
 - No repetir: ${recentMeals.slice(0, 5).join(', ') || 'ninguna'}
+
+TIPO DE RECETAS:
+- Variedad internacional: mexicana, italiana, mediterránea, asiática, americana
+- Priorizar recetas ALTAS EN PROTEÍNA:
+  * Carnes magras (pollo, res, atún, salmón)
+  * Huevo en desayunos
+  * Leguminosas (lentejas, garbanzos, frijoles)
+  * Lácteos (queso, yogur griego)
+- Cada receta debe tener mínimo 25-30g de proteína por porción de 4 personas
+- Comidas balanceadas: proteína + verduras + carbohidrato complejo cuando aplique
+- Evitar comida chatarra, frituras excesivas y azúcares añadidos
+${hasDiabetic ? '- Bajo índice glucémico obligatorio' : ''}
+
+DISTRIBUCIÓN SUGERIDA:
+- Desayuno: alto en proteína (huevo, avena proteica, yogur griego, quesadillas de pollo)
+- Comida: proteína principal + verduras + carbohidrato (pollo, res, pescado, leguminosas)
+- Cena: proteína ligera + verduras (ensaladas con pollo, sopas proteicas, pescado)
 
 Responde SOLO con JSON sin texto adicional:
 {
