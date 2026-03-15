@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Plus, CheckCircle2 } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, CheckCircle2, ChevronRight } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ChoreItem } from '@/components/chores/ChoreItem'
 import { ChoreItemSkeleton } from '@/components/ui/Skeleton'
@@ -11,6 +12,14 @@ import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
 import { Chore, Profile } from '@/types'
+import { getWeekNumber } from '@/lib/votes'
+import { getWeekStart, toDateString } from '@/lib/utils'
+
+interface ShoppingListData {
+  id: string
+  total_estimated_cost: number
+  budget_weekly: number
+}
 
 export default function TareasPage() {
   const [chores, setChores] = useState<Chore[]>([])
@@ -21,6 +30,8 @@ export default function TareasPage() {
   const [showAdd, setShowAdd] = useState(false)
   const [familyId, setFamilyId] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
+  const [shoppingList, setShoppingList] = useState<ShoppingListData | null>(null)
+  const [menuCompleto, setMenuCompleto] = useState(false)
 
   const [newTitle, setNewTitle] = useState('')
   const [newAssignee, setNewAssignee] = useState('')
@@ -42,7 +53,16 @@ export default function TareasPage() {
       if (!prof?.family_id) return
       setFamilyId(prof.family_id)
 
-      const [{ data: choresData }, { data: membersData }] = await Promise.all([
+      const semana = getWeekNumber(new Date())
+      const anio = new Date().getFullYear()
+      const weekStart = toDateString(getWeekStart())
+
+      const [
+        { data: choresData },
+        { data: membersData },
+        { data: weekMenu },
+        { data: shopping },
+      ] = await Promise.all([
         supabase
           .from('chores')
           .select('*, assignee:profiles!chores_assigned_to_fkey(*)')
@@ -51,10 +71,27 @@ export default function TareasPage() {
           .order('due_date', { ascending: true, nullsFirst: false })
           .order('created_at', { ascending: false }),
         supabase.from('profiles').select('*').eq('family_id', prof.family_id),
+        supabase
+          .from('weekly_menu')
+          .select('meal_type')
+          .eq('family_id', prof.family_id)
+          .eq('week_start', weekStart),
+        supabase
+          .from('shopping_list')
+          .select('id, total_estimated_cost, budget_weekly')
+          .eq('family_id', prof.family_id)
+          .eq('week_number', semana)
+          .eq('year', anio)
+          .maybeSingle(),
       ])
 
       setChores(choresData ?? [])
       setMembers(membersData ?? [])
+      setShoppingList(shopping as ShoppingListData | null)
+
+      const entries = weekMenu ?? []
+      const total = entries.length
+      setMenuCompleto(total >= 21)
     } catch {
       setError(true)
     } finally {
@@ -130,6 +167,23 @@ export default function TareasPage() {
       />
 
       <div className="page-content stack-4">
+        {/* ── CARD DE LISTA DE COMPRAS ─────────────────────── */}
+        {!loading && (menuCompleto || shoppingList) && (
+          <Link href="/menu/lista" className="shopping-task-card">
+            <span className="shopping-task-icon">🛒</span>
+            <div className="shopping-task-info">
+              <p className="shopping-task-title">Hacer la compra del súper</p>
+              <p className="shopping-task-sub">
+                {shoppingList
+                  ? `Total estimado: $${shoppingList.total_estimated_cost?.toFixed(0)} MXN`
+                  : 'El menú está listo — genera la lista de compras'
+                }
+              </p>
+            </div>
+            <ChevronRight style={{ width: 18, height: 18, color: 'var(--muted)', flexShrink: 0 }} />
+          </Link>
+        )}
+
         {loading ? (
           <div className="stack-3">
             {[1, 2, 3].map((i) => <ChoreItemSkeleton key={i} />)}

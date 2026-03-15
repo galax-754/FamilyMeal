@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, Suspense } from 'react'
+import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { Plus, Search, Utensils } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -12,7 +13,7 @@ import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
 import { registrarVoto, getWeekNumber } from '@/lib/votes'
 import { Meal, MealCategory, Profile, SwipeVote } from '@/types'
-import { CATEGORY_LABELS } from '@/lib/utils'
+import { getWeekStart, toDateString } from '@/lib/utils'
 
 const FILTERS: Array<{ value: MealCategory | 'todas'; label: string }> = [
   { value: 'todas',    label: 'Todas' },
@@ -22,9 +23,24 @@ const FILTERS: Array<{ value: MealCategory | 'todas'; label: string }> = [
   { value: 'snack',    label: 'Snack' },
 ]
 
+const TARGET = 7
+const CONFETTI_COLORS = ['#f59e0b', '#22c55e', '#60a5fa', '#ef4444', '#a78bfa', '#fb923c', '#34d399']
+const CATEGORY_NAMES: Record<string, string> = {
+  desayuno: 'Desayuno', comida: 'Comida', cena: 'Cena',
+}
+
 type Modo = 'lista' | 'swipe'
 
-export default function ComidasPage() {
+interface VotingProgress {
+  desayunos: number
+  comidas: number
+  cenas: number
+}
+
+function ComidasContent() {
+  const searchParams = useSearchParams()
+  const initialModo = searchParams.get('modo') === 'votar' ? 'swipe' : 'lista'
+
   const [meals, setMeals] = useState<Meal[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -32,15 +48,18 @@ export default function ComidasPage() {
   const [filter, setFilter] = useState<MealCategory | 'todas'>('todas')
   const [familyId, setFamilyId] = useState<string | null>(null)
   const [userId, setUserId] = useState<string | null>(null)
-  const [modo, setModo] = useState<Modo>('lista')
+  const [modo, setModo] = useState<Modo>(initialModo)
 
-  // Swipe mode state
   const [members, setMembers] = useState<Profile[]>([])
   const [swipeVotes, setSwipeVotes] = useState<SwipeVote[]>([])
   const [swipeIndex, setSwipeIndex] = useState(0)
   const [showMatch, setShowMatch] = useState(false)
   const [matchedMealName, setMatchedMealName] = useState('')
+  const [matchedDay, setMatchedDay] = useState('')
+  const [matchedCategory, setMatchedCategory] = useState('')
   const [swipingMealId, setSwipingMealId] = useState<string | null>(null)
+  const [progress, setProgress] = useState<VotingProgress>({ desayunos: 0, comidas: 0, cenas: 0 })
+  const [menuCompleto, setMenuCompleto] = useState(false)
 
   const toast = useToast()
   const supabase = createClient()
@@ -64,11 +83,13 @@ export default function ComidasPage() {
 
       const semana = getWeekNumber(new Date())
       const anio = new Date().getFullYear()
+      const weekStart = toDateString(getWeekStart())
 
       const [
         { data, error: err },
         { data: mems },
         { data: votes },
+        { data: weeklyMenu },
       ] = await Promise.all([
         supabase
           .from('meals')
@@ -86,6 +107,11 @@ export default function ComidasPage() {
           .eq('family_id', prof.family_id)
           .eq('week_number', semana)
           .eq('year', anio),
+        supabase
+          .from('weekly_menu')
+          .select('meal_type')
+          .eq('family_id', prof.family_id)
+          .eq('week_start', weekStart),
       ])
 
       if (err) throw err
@@ -101,7 +127,15 @@ export default function ComidasPage() {
       setMembers(mems ?? [])
       setSwipeVotes((votes ?? []) as SwipeVote[])
 
-      // Swipe index: start with unvoted meals
+      const entries = weeklyMenu ?? []
+      const prog = {
+        desayunos: entries.filter((e) => e.meal_type === 'desayuno').length,
+        comidas:   entries.filter((e) => e.meal_type === 'comida').length,
+        cenas:     entries.filter((e) => e.meal_type === 'cena').length,
+      }
+      setProgress(prog)
+      setMenuCompleto(prog.desayunos + prog.comidas + prog.cenas >= 21)
+
       const unvotedIdx = scored.findIndex(
         (m) => !(votes ?? []).some((v) => v.profile_id === user.id && v.meal_id === m.id)
       )
@@ -115,7 +149,6 @@ export default function ComidasPage() {
 
   useEffect(() => { load() }, [load])
 
-  // ── Lista: voto tradicional ───────────────────────────
   const handleVote = async (mealId: string, vote: -1 | 0 | 1) => {
     if (!userId) return
     try {
@@ -141,12 +174,13 @@ export default function ComidasPage() {
     }
   }
 
-  // ── Swipe: voto match ─────────────────────────────────
   const handleSwipeVote = async (mealId: string, voto: boolean) => {
     if (!userId || !familyId || swipingMealId) return
     setSwipingMealId(mealId)
     try {
-      const { isMatch } = await registrarVoto(supabase, mealId, userId, familyId, voto)
+      const { isMatch, assignedDay, assignedCategory } = await registrarVoto(
+        supabase, mealId, userId, familyId, voto
+      )
 
       const semana = getWeekNumber(new Date())
       const anio = new Date().getFullYear()
@@ -162,11 +196,27 @@ export default function ComidasPage() {
       if (isMatch) {
         const matchedMeal = meals.find((m) => m.id === mealId)
         setMatchedMealName(matchedMeal?.name ?? 'La comida')
+        setMatchedDay(assignedDay ?? '')
+        setMatchedCategory(assignedCategory ?? '')
         setShowMatch(true)
-        setTimeout(() => setShowMatch(false), 2500)
+
+        setProgress((prev) => {
+          const cat = assignedCategory ?? ''
+          const next = {
+            desayunos: prev.desayunos + (cat === 'desayuno' ? 1 : 0),
+            comidas:   prev.comidas   + (cat === 'comida'   ? 1 : 0),
+            cenas:     prev.cenas     + (cat === 'cena'     ? 1 : 0),
+          }
+          const total = next.desayunos + next.comidas + next.cenas
+          if (total >= 21) {
+            setTimeout(() => { setShowMatch(false); setMenuCompleto(true) }, 2500)
+          } else {
+            setTimeout(() => setShowMatch(false), 2500)
+          }
+          return next
+        })
       }
 
-      // Avanzar al siguiente
       setSwipeIndex((prev) => {
         for (let i = 1; i < meals.length; i++) {
           const next = (prev + i) % meals.length
@@ -184,7 +234,6 @@ export default function ComidasPage() {
     }
   }
 
-  // ── Lista filtrada ────────────────────────────────────
   const filtered = meals.filter((m) => {
     const matchesFilter = filter === 'todas' || m.category === filter
     const matchesSearch = m.name.toLowerCase().includes(search.toLowerCase())
@@ -199,15 +248,19 @@ export default function ComidasPage() {
     ? swipeVotes.filter((v) => v.meal_id === swipeMeal.id)
     : []
 
+  const totalMatches = progress.desayunos + progress.comidas + progress.cenas
+
   return (
     <div>
       <PageHeader
-        title="Comidas"
+        title={modo === 'swipe' ? 'Votando el menú' : 'Comidas'}
         action={
-          <Link href="/comidas/nueva" className="btn-add-header">
-            <Plus style={{ width: 20, height: 20 }} />
-            Nueva
-          </Link>
+          modo === 'lista' ? (
+            <Link href="/comidas/nueva" className="btn-add-header">
+              <Plus style={{ width: 20, height: 20 }} />
+              Nueva
+            </Link>
+          ) : undefined
         }
       />
 
@@ -230,7 +283,7 @@ export default function ComidasPage() {
           </div>
         </div>
 
-        {/* ── MODO LISTA ─────────────────────────────── */}
+        {/* ── MODO LISTA ──────────────────────────────────── */}
         {modo === 'lista' && (
           <>
             <div className="search-box">
@@ -282,11 +335,7 @@ export default function ComidasPage() {
                         <span className="badge badge-green">🩺 Apto diabético</span>
                       </div>
                     )}
-                    <MealCard
-                      meal={meal}
-                      onVote={handleVote}
-                      showVote
-                    />
+                    <MealCard meal={meal} onVote={handleVote} showVote />
                   </div>
                 ))}
               </div>
@@ -294,13 +343,41 @@ export default function ComidasPage() {
           </>
         )}
 
-        {/* ── MODO SWIPE ─────────────────────────────── */}
+        {/* ── MODO SWIPE ──────────────────────────────────── */}
         {modo === 'swipe' && (
           <>
-            {loading ? (
-              <div className="stack-4">
-                <MealCardSkeleton />
+            {/* Progreso de votación */}
+            {!loading && (
+              <div className="voting-progress-card">
+                <div className="voting-progress-header">
+                  <span className="voting-progress-title">Menú semanal</span>
+                  <span className="voting-progress-count">{totalMatches} / 21 matches</span>
+                </div>
+                <div className="voting-categories">
+                  {([
+                    { label: 'Desayunos', count: progress.desayunos },
+                    { label: 'Comidas',   count: progress.comidas },
+                    { label: 'Cenas',     count: progress.cenas },
+                  ] as const).map(({ label, count }) => (
+                    <div key={label} className="voting-cat-row">
+                      <span className="voting-cat-label">{label}</span>
+                      <div className="voting-cat-dots">
+                        {Array.from({ length: TARGET }).map((_, i) => (
+                          <div
+                            key={i}
+                            className={`voting-dot${i < count ? ' voting-dot-filled' : ''}`}
+                          />
+                        ))}
+                      </div>
+                      <span className="voting-cat-fraction">{count}/{TARGET}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
+            )}
+
+            {loading ? (
+              <div className="stack-4"><MealCardSkeleton /></div>
             ) : meals.length === 0 ? (
               <EmptyState
                 icon={<Utensils style={{ width: 40, height: 40 }} />}
@@ -337,20 +414,86 @@ export default function ComidasPage() {
         )}
       </div>
 
-      {/* ── OVERLAY DE MATCH ──────────────────────── */}
+      {/* ── OVERLAY DE MATCH ──────────────────────────────── */}
       {showMatch && (
         <div className="match-overlay" onClick={() => setShowMatch(false)}>
+          <div className="match-confetti">
+            {Array.from({ length: 24 }).map((_, i) => (
+              <div
+                key={i}
+                className="confetti-piece"
+                style={{
+                  left: `${(i / 24) * 100}%`,
+                  animationDelay: `${(i % 6) * 0.12}s`,
+                  background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+                  transform: `rotate(${i * 15}deg)`,
+                }}
+              />
+            ))}
+          </div>
           <div className="match-emoji">🎉</div>
           <h2 className="match-title">¡Match familiar!</h2>
           <p className="match-subtitle">
             <span className="match-meal-name">{matchedMealName}</span>
-            {' '}ya está en el menú de esta semana
           </p>
+          {matchedDay && (
+            <p className="match-day-text">
+              irá el {matchedDay} · {CATEGORY_NAMES[matchedCategory] ?? matchedCategory}
+            </p>
+          )}
           <p style={{ color: 'var(--hint)', fontSize: '12px', marginTop: '16px' }}>
             Toca para continuar
           </p>
         </div>
       )}
+
+      {/* ── PANTALLA MENÚ COMPLETO ─────────────────────────── */}
+      {menuCompleto && !showMatch && (
+        <div className="match-overlay" style={{ cursor: 'default' }}>
+          <div className="match-confetti">
+            {Array.from({ length: 30 }).map((_, i) => (
+              <div
+                key={i}
+                className="confetti-piece"
+                style={{
+                  left: `${(i / 30) * 100}%`,
+                  animationDelay: `${(i % 8) * 0.1}s`,
+                  background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+                  animationDuration: '3s',
+                }}
+              />
+            ))}
+          </div>
+          <div style={{ fontSize: 72, marginBottom: 8 }}>🎊</div>
+          <h2 className="match-title">¡Menú completo!</h2>
+          <p className="match-subtitle" style={{ marginBottom: 8 }}>
+            Las 21 comidas de la semana están listas
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16, width: '100%', maxWidth: 280 }}>
+            <Link
+              href="/menu"
+              className="btn-primary"
+              style={{ textAlign: 'center', padding: '14px 24px', borderRadius: 'var(--r)', textDecoration: 'none', fontSize: 15, fontWeight: 700 }}
+            >
+              Ver mi menú de la semana →
+            </Link>
+            <button
+              onClick={() => setMenuCompleto(false)}
+              style={{ background: 'none', border: 'none', color: 'var(--hint)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+export default function ComidasPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <ComidasContent />
+    </Suspense>
   )
 }

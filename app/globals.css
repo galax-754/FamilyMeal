@@ -2300,3 +2300,234 @@ select.input {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--surface3); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-med); }
+
+/* ─── VOTING PROGRESS ────────────────────── */
+
+.voting-progress-card {
+  background: var(--surface);
+  border: 1px solid var(--border-med);
+  border-radius: var(--r);
+  padding: 16px;
+}
+
+.voting-progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.voting-progress-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.voting-progress-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.voting-categories {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.voting-cat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voting-cat-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.voting-cat-dots {
+  display: flex;
+  gap: 4px;
+  flex: 1;
+}
+
+.voting-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--surface3);
+  border: 1px solid var(--border-med);
+  transition: background 0.25s, border-color 0.25s;
+}
+
+.voting-dot-filled {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.voting-cat-fraction {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  width: 26px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+/* ─── MATCH DAY TEXT ─────────────────────── */
+
+.match-day-text {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+  text-align: center;
+  letter-spacing: -0.3px;
+}
+
+/* ─── CONFETTI ───────────────────────────── */
+
+.match-confetti {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: -12px;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  animation: confettiFall 2.5s ease-in forwards;
+}
+
+@keyframes confettiFall {
+  0%   { transform: translateY(0)    rotate(0deg);   opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translateY(105vh) rotate(780deg); opacity: 0; }
+}
+
+/* ─── ESTADO SEMANAL CARDS ───────────────── */
+
+.estado-card {
+  border-radius: var(--r);
+  padding: 16px;
+  border: 1px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.estado-card-amber {
+  background: rgba(245,158,11,0.08);
+  border-color: rgba(245,158,11,0.30);
+}
+
+.estado-card-blue {
+  background: rgba(96,165,250,0.08);
+  border-color: rgba(96,165,250,0.30);
+}
+
+.estado-card-green {
+  background: rgba(34,197,94,0.08);
+  border-color: rgba(34,197,94,0.30);
+}
+
+.estado-card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.estado-card-subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ─── SHOPPING PREVIEW CARD ──────────────── */
+
+.shopping-task-card {
+  background: rgba(245,158,11,0.07);
+  border: 1px solid rgba(245,158,11,0.28);
+  border-radius: var(--r);
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-decoration: none;
+  transition: border-color 0.2s;
+  cursor: pointer;
+}
+
+.shopping-task-card:hover {
+  border-color: var(--amber);
+}
+
+.shopping-task-icon {
+  font-size: 28px;
+  flex-shrink: 0;
+}
+
+.shopping-task-info { flex: 1; min-width: 0; }
+.shopping-task-title { font-size: 14px; font-weight: 700; color: var(--text); }
+.shopping-task-sub   { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+/* ─── PREFERENCES PAGE ───────────────────── */
+
+.pref-option-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.pref-option-btn {
+  padding: 12px;
+  border-radius: var(--r-sm);
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: 'Inter', sans-serif;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.2s, background 0.2s;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.pref-option-btn.selected {
+  border-color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.pref-option-emoji { font-size: 22px; }
+
+/* ─── UNIRSE PAGE ────────────────────────── */
+
+.family-invite-banner {
+  background: linear-gradient(135deg, #1a1a28, #2a1a00);
+  border: 1px solid rgba(245,158,11,0.25);
+  border-radius: var(--r);
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.family-invite-name {
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--amber);
+  margin-top: 4px;
+}

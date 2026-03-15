@@ -1,88 +1,164 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { Copy, Check, LogOut, Crown, User, Users, Sparkles, Save } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Copy, Check, LogOut, Crown, Users, Share2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { PageLoader } from '@/components/ui/Skeleton'
 import { Button } from '@/components/ui/Button'
 import { ConfirmModal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
+import { ConfiguracionCard } from '@/components/family/ConfiguracionCard'
 import { createClient } from '@/lib/supabase/client'
-import { Family, Profile, WeeklyMenu } from '@/types'
+import { getWeekNumber } from '@/lib/votes'
 import { getWeekStart, toDateString } from '@/lib/utils'
+import { useRouter } from 'next/navigation'
+
+interface FamilyData {
+  id: string
+  name: string
+  invite_code: string
+  budget_weekly: number | null
+  match_mode?: string
+}
+
+interface MemberData {
+  id: string
+  name: string
+  role: string
+  avatar_color?: string
+}
+
+interface MenuProgress {
+  desayunos: number
+  comidas: number
+  cenas: number
+  votingStarted: boolean
+}
+
+const AVATAR_COLORS = ['av-amber', 'av-pink', 'av-indigo', 'av-green']
+
+const roleBadgeClass: Record<string, string> = {
+  admin:  'role-badge role-badge-admin',
+  member: 'role-badge role-badge-member',
+  child:  'role-badge role-badge-child',
+}
+const roleLabels: Record<string, string> = {
+  admin: 'Admin', member: 'Miembro', child: 'Niño/a',
+}
 
 export default function FamiliaPage() {
-  const [family, setFamily] = useState<Family | null>(null)
-  const [members, setMembers] = useState<Profile[]>([])
-  const [myProfile, setMyProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
-  const [codeCopied, setCodeCopied] = useState(false)
+  const [family, setFamily] = useState<FamilyData | null>(null)
+  const [members, setMembers] = useState<MemberData[]>([])
+  const [myId, setMyId] = useState<string | null>(null)
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [inviteLink, setInviteLink] = useState('')
+  const [linkCopied, setLinkCopied] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [showLogout, setShowLogout] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
-  const [showGroq, setShowGroq] = useState(false)
-  const [suggestions, setSuggestions] = useState<string[]>([])
-  const [loadingSuggestions, setLoadingSuggestions] = useState(false)
-  // Presupuesto
-  const [budgetInput, setBudgetInput] = useState('')
-  const [savingBudget, setSavingBudget] = useState(false)
-  const [gastado, setGastado] = useState(0)
 
-  const router = useRouter()
+  // Estado del menú semanal
+  const [menuProgress, setMenuProgress] = useState<MenuProgress | null>(null)
+  const [matchMode, setMatchMode] = useState<string>('full')
+  const [actionLoading, setActionLoading] = useState(false)
+
   const toast = useToast()
+  const router = useRouter()
   const supabase = createClient()
 
-  useEffect(() => {
-    const load = async () => {
+  async function loadFamilyData() {
+    try {
+      setLoading(true)
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      setMyId(user.id)
 
-      const { data: prof } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
-        .select('*')
+        .select('*, families(*)')
         .eq('id', user.id)
         .single()
 
-      if (!prof) return
-      setMyProfile(prof)
+      if (profileError || !profile?.family_id) {
+        setError('No tienes una familia configurada aún')
+        setLoading(false)
+        return
+      }
 
-      if (!prof.family_id) { setLoading(false); return }
+      const fam = profile.families as FamilyData
+      setFamily(fam)
+      setIsAdmin(profile.role === 'admin')
+      setMatchMode(fam.match_mode ?? 'full')
 
+      const baseUrl = window.location.origin
+      setInviteLink(`${baseUrl}/unirse?codigo=${fam.invite_code}`)
+
+      const weekNumber = getWeekNumber(new Date())
+      const year = new Date().getFullYear()
       const weekStart = toDateString(getWeekStart())
-      const [{ data: fam }, { data: mems }, { data: menu }] = await Promise.all([
-        supabase.from('families').select('*').eq('id', prof.family_id).single(),
-        supabase.from('profiles').select('*').eq('family_id', prof.family_id).order('created_at'),
+
+      const [{ data: membersData }, { data: weeklyMenuData }, { data: votingStatus }] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, name, role')
+          .eq('family_id', profile.family_id)
+          .order('created_at'),
         supabase
           .from('weekly_menu')
-          .select('*, meal:meals(estimated_cost)')
-          .eq('family_id', prof.family_id)
+          .select('meal_type')
+          .eq('family_id', profile.family_id)
           .eq('week_start', weekStart),
+        supabase
+          .from('weekly_voting_status')
+          .select('recipes_generated, voting_started')
+          .eq('family_id', profile.family_id)
+          .eq('week_number', weekNumber)
+          .eq('year', year)
+          .maybeSingle(),
       ])
 
-      setFamily(fam)
-      setMembers(mems ?? [])
-      if (fam?.budget_weekly) setBudgetInput(String(fam.budget_weekly))
+      setMembers((membersData ?? []) as MemberData[])
 
-      const totalGastado = (menu ?? []).reduce((sum, entry) => {
-        const cost = (entry.meal as { estimated_cost?: number } | null)?.estimated_cost ?? 0
-        return sum + cost
-      }, 0)
-      setGastado(totalGastado)
+      // Conteos directamente del weekly_menu (fuente de verdad)
+      const entries = weeklyMenuData ?? []
+      const recipesGenerated = votingStatus?.recipes_generated ?? false
+      const votingStarted    = votingStatus?.voting_started    ?? false
+
+      if (recipesGenerated || votingStarted || entries.length > 0) {
+        setMenuProgress({
+          desayunos:     entries.filter((e) => e.meal_type === 'desayuno').length,
+          comidas:       entries.filter((e) => e.meal_type === 'comida').length,
+          cenas:         entries.filter((e) => e.meal_type === 'cena').length,
+          votingStarted: true,
+        })
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Error al cargar los datos de tu familia')
+    } finally {
       setLoading(false)
     }
-    load()
-  }, [])
+  }
 
-  const copyCode = async () => {
-    if (!family) return
+  useEffect(() => { loadFamilyData() }, [])
+
+  const copyLink = async () => {
     try {
-      await navigator.clipboard.writeText(family.invite_code)
-      setCodeCopied(true)
-      toast.success('Código copiado al portapapeles.')
-      setTimeout(() => setCodeCopied(false), 2000)
+      await navigator.clipboard.writeText(inviteLink)
+      setLinkCopied(true)
+      toast.success('Link copiado al portapapeles.')
+      setTimeout(() => setLinkCopied(false), 2500)
     } catch {
       toast.error('No se pudo copiar. Compártelo manualmente.')
     }
+  }
+
+  const shareWhatsApp = () => {
+    const text = encodeURIComponent(
+      `Únete a nuestra familia en FamilyMeal 🍽️\n${inviteLink}`
+    )
+    window.open(`https://wa.me/?text=${text}`, '_blank')
   }
 
   const handleLogout = async () => {
@@ -99,71 +175,233 @@ export default function FamiliaPage() {
     }
   }
 
-  const saveBudget = async () => {
-    if (!family) return
-    const val = parseFloat(budgetInput.replace(/,/g, ''))
-    if (isNaN(val) || val <= 0) {
-      toast.error('Ingresa un monto válido.')
-      return
-    }
-    setSavingBudget(true)
+  const handleGenerarMasRecetas = async () => {
+    if (!family || !menuProgress) return
+    setActionLoading(true)
     try {
-      const { error } = await supabase
-        .from('families')
-        .update({ budget_weekly: val })
-        .eq('id', family.id)
-      if (error) throw error
-      setFamily((prev) => prev ? { ...prev, budget_weekly: val } : prev)
-      toast.success('Presupuesto guardado.')
-    } catch {
-      toast.error('No se pudo guardar el presupuesto.')
-    } finally {
-      setSavingBudget(false)
-    }
-  }
+      const missing: string[] = []
+      if (menuProgress.desayunos < 7) missing.push('desayuno')
+      if (menuProgress.comidas   < 7) missing.push('comida')
+      if (menuProgress.cenas     < 7) missing.push('cena')
 
-  const loadSuggestions = async () => {
-    setLoadingSuggestions(true)
-    try {
-      const { data: meals } = await supabase
-        .from('meals')
-        .select('name')
-        .eq('family_id', family?.id ?? '')
-
-      const existingNames = (meals ?? []).map((m: { name: string }) => m.name)
-
-      const res = await fetch('/api/sugerir-comida', {
+      const res = await fetch('/api/generar-recetas', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ existingMeals: existingNames }),
+        body: JSON.stringify({ family_id: family.id, only_categories: missing }),
       })
-
-      if (!res.ok) throw new Error('Error')
       const data = await res.json()
-      setSuggestions(data.map((s: { name: string }) => s.name))
-    } catch {
-      toast.error('Algo salió mal al pedir sugerencias.')
+      if (!res.ok) throw new Error(data.error)
+
+      if (data.total === 0) {
+        toast.success('El menú ya está completo en esas categorías.')
+      } else {
+        toast.success(`Se generaron ${data.total} recetas nuevas para votar ✨`)
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('No se pudieron generar las recetas. Intenta de nuevo.')
     } finally {
-      setLoadingSuggestions(false)
+      setActionLoading(false)
     }
   }
 
-  const roleBadgeClass: Record<string, string> = {
-    admin:  'role-badge role-badge-admin',
-    member: 'role-badge role-badge-member',
-    child:  'role-badge role-badge-child',
+  const handleActivarMayoria = async () => {
+    if (!family) return
+    setActionLoading(true)
+    try {
+      const res = await fetch('/api/familia/activar-mayoria', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ family_id: family.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+
+      setMatchMode('majority')
+      if (data.new_matches > 0) {
+        toast.success(`¡Se encontraron ${data.new_matches} matches nuevos con mayoría! 👥`)
+        await loadFamilyData()
+      } else {
+        toast.success('Match con mayoría activado. Los próximos votos usarán este criterio.')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('No se pudo activar el modo mayoría.')
+    } finally {
+      setActionLoading(false)
+    }
   }
-  const roleLabels: Record<string, string> = {
-    admin: 'Admin', member: 'Miembro', child: 'Niño/a',
+
+  const handleCompletarAuto = async () => {
+    if (!family) return
+    setActionLoading(true)
+    try {
+      const res = await fetch('/api/familia/completar-menu', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ family_id: family.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error)
+
+      if (data.assigned > 0) {
+        toast.success(`¡Se asignaron ${data.assigned} comidas automáticamente! 🤖`)
+        await loadFamilyData()
+      } else {
+        toast.success('No había recetas con votos suficientes para asignar.')
+      }
+    } catch (err) {
+      console.error(err)
+      toast.error('No se pudo completar el menú automáticamente.')
+    } finally {
+      setActionLoading(false)
+    }
   }
 
   if (loading) return <><PageHeader title="Familia" /><PageLoader message="Cargando familia..." /></>
+
+  if (error) {
+    return (
+      <div>
+        <PageHeader title="Familia" />
+        <div className="page-content">
+          <div className="error-banner">{error}</div>
+        </div>
+      </div>
+    )
+  }
+
+  const totalMatches = menuProgress
+    ? menuProgress.desayunos + menuProgress.comidas + menuProgress.cenas
+    : 0
+  const showProgressPanel = isAdmin && menuProgress && menuProgress.votingStarted
 
   return (
     <div>
       <PageHeader title="Mi familia" />
 
       <div className="page-content-spacious stack-6">
+
+        {/* ── PANEL PROGRESO MENÚ (solo admin cuando hay votación activa) ── */}
+        {showProgressPanel && (
+          <div className="card" style={{ marginBottom: '4px' }}>
+
+            {/* Header con progreso total */}
+            <div style={{ marginBottom: '16px' }}>
+              <div style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '12px',
+              }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                  Progreso del menú semanal
+                </span>
+                <span className={`badge ${totalMatches === 21 ? 'badge-green' : 'badge-amber'}`}>
+                  {totalMatches}/21
+                </span>
+              </div>
+
+              {[
+                { label: 'Desayunos', matched: menuProgress!.desayunos, emoji: '🌅' },
+                { label: 'Comidas',   matched: menuProgress!.comidas,   emoji: '☀️' },
+                { label: 'Cenas',     matched: menuProgress!.cenas,     emoji: '🌙' },
+              ].map(({ label, matched, emoji }) => (
+                <div key={label} style={{ marginBottom: '10px' }}>
+                  <div style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginBottom: 4,
+                  }}>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                      {emoji} {label}
+                    </span>
+                    <span style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: matched === 7 ? 'var(--green)' : 'var(--amber)',
+                    }}>
+                      {matched}/7
+                    </span>
+                  </div>
+                  <div className="progress-track">
+                    <div
+                      className="progress-fill"
+                      style={{
+                        width: `${(matched / 7) * 100}%`,
+                        background: matched === 7
+                          ? 'var(--green)'
+                          : 'linear-gradient(90deg, var(--amber), var(--amber-dark))',
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Acciones cuando el menú no está completo */}
+            {totalMatches < 21 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button
+                  className="btn-primary"
+                  onClick={handleGenerarMasRecetas}
+                  disabled={actionLoading}
+                >
+                  ✨ Generar más recetas para votar
+                </button>
+
+                <button
+                  className="btn-ghost"
+                  onClick={handleActivarMayoria}
+                  disabled={actionLoading || matchMode === 'majority'}
+                >
+                  👥 {matchMode === 'majority'
+                    ? 'Match con mayoría activado ✓'
+                    : 'Activar match con mayoría (3/4)'}
+                </button>
+
+                {totalMatches >= 16 && (
+                  <button
+                    className="btn-ghost"
+                    onClick={handleCompletarAuto}
+                    disabled={actionLoading}
+                    style={{
+                      borderColor: 'rgba(96,165,250,0.35)',
+                      color: 'var(--blue)',
+                    }}
+                  >
+                    🤖 Completar menú automáticamente
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Menú completo */}
+            {totalMatches === 21 && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '12px',
+                background: 'rgba(34,197,94,0.08)',
+                borderRadius: 'var(--r-sm)',
+                border: '1px solid rgba(34,197,94,0.2)',
+              }}>
+                <span style={{ fontSize: 24 }}>🎉</span>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--green)' }}>
+                    ¡Menú completo!
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    Las 21 comidas de la semana están listas
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── HERO ────────────────────────────────────────── */}
         {family && (
           <div className="family-hero">
             <div className="family-hero-label">
@@ -175,42 +413,22 @@ export default function FamiliaPage() {
           </div>
         )}
 
-        {family && (
-          <section>
-            <h3 className="section-title mb-12">Invitar a la familia</h3>
-            <div className="card">
-              <p className="invite-description">
-                Comparte este código para que otros se unan a tu familia
-              </p>
-              <div className="invite-code-row">
-                <div className="code-display">
-                  <span className="code-text">{family.invite_code}</span>
-                </div>
-                <button onClick={copyCode} className="btn-copy">
-                  {codeCopied ? <Check style={{ width: 20, height: 20 }} /> : <Copy style={{ width: 20, height: 20 }} />}
-                  {codeCopied ? 'Copiado' : 'Copiar'}
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
+        {/* ── MIEMBROS ─────────────────────────────────────── */}
         <section>
           <h3 className="section-title mb-12">Miembros</h3>
           <div className="stack-2">
-            {members.map((member) => (
+            {members.map((member, idx) => (
               <div key={member.id} className="member-row">
-                <div className="member-avatar">
-                  {member.role === 'admin' ? (
-                    <Crown style={{ width: 20, height: 20 }} />
-                  ) : (
-                    <User style={{ width: 18, height: 18 }} />
-                  )}
+                <div className={`avatar avatar-md ${AVATAR_COLORS[idx % AVATAR_COLORS.length]}`}>
+                  {member.role === 'admin'
+                    ? <Crown style={{ width: 16, height: 16 }} />
+                    : member.name.charAt(0).toUpperCase()
+                  }
                 </div>
                 <div className="member-info">
                   <p className="member-name">
                     {member.name}
-                    {member.id === myProfile?.id && (
+                    {member.id === myId && (
                       <span className="member-you">(Tú)</span>
                     )}
                   </p>
@@ -223,118 +441,78 @@ export default function FamiliaPage() {
           </div>
         </section>
 
-        {/* ── PRESUPUESTO SEMANAL ────────────────── */}
+        {/* ── INVITAR MIEMBROS ─────────────────────────────── */}
         {family && (
           <section>
-            <h3 className="section-title mb-12">Presupuesto semanal</h3>
-            <div className="card stack-4">
-              <div className="budget-input-wrap">
-                <span className="budget-prefix">$</span>
-                <input
-                  type="number"
-                  inputMode="numeric"
-                  value={budgetInput}
-                  onChange={(e) => setBudgetInput(e.target.value)}
-                  placeholder="1,000"
-                  className="input budget-input"
-                />
-                <span className="budget-suffix">MXN</span>
-              </div>
-              <p className="text-muted fs-12">
-                Para una familia de 4 en Monterrey, el promedio es $850–$950/semana
+            <h3 className="section-title mb-12">Invitar miembros</h3>
+            <div className="card stack-3">
+              <p style={{ fontSize: 13, color: 'var(--muted)' }}>
+                Comparte este link para que tu familia se una
               </p>
-
-              {family.budget_weekly != null && family.budget_weekly > 0 && (() => {
-                const total = family.budget_weekly
-                const porcentaje = (gastado / total) * 100
-                const overBudget = gastado > total
-                return (
-                  <div>
-                    <div className="flex justify-between mb-8">
-                      <span className="fs-12 text-muted">Comprometido esta semana</span>
-                      <span className={`fs-12 fw-700 ${overBudget ? 'text-red' : 'text-amber'}`}>
-                        ${gastado.toFixed(0)} / ${total.toFixed(0)}
-                      </span>
-                    </div>
-                    <div className="progress-track">
-                      <div
-                        className="progress-fill"
-                        style={{
-                          width: `${Math.min(porcentaje, 100)}%`,
-                          background: overBudget ? 'var(--red)' : undefined,
-                        }}
-                      />
-                    </div>
-                    {overBudget && (
-                      <p className="budget-over-msg">
-                        ⚠️ Superaste el presupuesto por ${(gastado - total).toFixed(0)}
-                      </p>
-                    )}
-                  </div>
-                )
-              })()}
-
-              <Button
-                fullWidth
-                variant="primary"
-                size="sm"
-                loading={savingBudget}
-                onClick={saveBudget}
-                icon={<Save style={{ width: 16, height: 16 }} />}
-              >
-                Guardar presupuesto
-              </Button>
+              <div style={{
+                background: 'var(--surface2)',
+                borderRadius: 'var(--r-sm)',
+                padding: '10px 12px',
+                fontSize: 12,
+                color: 'var(--muted)',
+                wordBreak: 'break-all',
+                border: '1px solid var(--border)',
+                lineHeight: 1.5,
+              }}>
+                {inviteLink}
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn-copy"
+                  style={{ flex: 1, borderRadius: 'var(--r-sm)' }}
+                  onClick={copyLink}
+                >
+                  {linkCopied
+                    ? <><Check style={{ width: 16, height: 16 }} /> Copiado</>
+                    : <><Copy style={{ width: 16, height: 16 }} /> Copiar link</>
+                  }
+                </button>
+                <button
+                  onClick={shareWhatsApp}
+                  style={{
+                    flex: 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 6,
+                    padding: '0 16px',
+                    minHeight: 48,
+                    borderRadius: 'var(--r-sm)',
+                    border: '1px solid var(--border-med)',
+                    background: 'var(--surface2)',
+                    color: 'var(--text)',
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontFamily: 'Inter, sans-serif',
+                  }}
+                >
+                  <Share2 style={{ width: 16, height: 16 }} />
+                  WhatsApp
+                </button>
+              </div>
+              <p style={{ fontSize: 11, color: 'var(--hint)', textAlign: 'center' }}>
+                Código de respaldo: <strong style={{ fontFamily: 'monospace', letterSpacing: 2 }}>{family.invite_code}</strong>
+              </p>
             </div>
           </section>
         )}
 
-        <section>
-          <h3 className="section-title mb-12">Sugerencias de comida (IA)</h3>
-          <div className="card stack-3">
-            <p className="text-muted fs-13">
-              Usa Groq IA para obtener ideas de platillos que tu familia no ha probado
-            </p>
-            <Button
-              fullWidth
-              variant="outline"
-              onClick={() => { loadSuggestions(); setShowGroq(true) }}
-              icon={<Sparkles style={{ width: 20, height: 20 }} />}
-            >
-              Pedir sugerencias
-            </Button>
+        {/* ── CONFIGURACIÓN (solo admin) ──────────────────── */}
+        {isAdmin && family && (
+          <ConfiguracionCard
+            family={family}
+            members={members}
+            onUpdate={loadFamilyData}
+          />
+        )}
 
-            {showGroq && (
-              <div className="stack-2 mt-8">
-                {loadingSuggestions ? (
-                  <div className="loading-row">
-                    <div className="spinner" />
-                    <p className="loading-text">Pensando ideas para tu familia...</p>
-                  </div>
-                ) : suggestions.length > 0 ? (
-                  <>
-                    <p className="pending-label">Sugerencias</p>
-                    {suggestions.map((s, i) => (
-                      <div key={i} className="suggestion-row">
-                        <span className="suggestion-num">{i + 1}.</span>
-                        <span className="suggestion-text">{s}</span>
-                      </div>
-                    ))}
-                    <Button
-                      fullWidth
-                      variant="ghost"
-                      size="sm"
-                      onClick={loadSuggestions}
-                      loading={loadingSuggestions}
-                    >
-                      Pedir más ideas
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            )}
-          </div>
-        </section>
-
+        {/* ── CERRAR SESIÓN ───────────────────────────────── */}
         <section>
           <Button
             fullWidth

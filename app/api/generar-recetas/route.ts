@@ -17,7 +17,17 @@ function getWeekNumber(date: Date): number {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { family_id, preferences = '', is_diabetic_friendly = false } = body
+    const {
+      family_id,
+      preferences = '',
+      is_diabetic_friendly = false,
+      only_categories,
+    }: {
+      family_id: string
+      preferences?: string
+      is_diabetic_friendly?: boolean
+      only_categories?: string[]
+    } = body
 
     if (!family_id) {
       return NextResponse.json({ error: 'family_id requerido' }, { status: 400 })
@@ -51,12 +61,62 @@ export async function POST(request: NextRequest) {
     const existingNames = (existingMeals ?? []).map((m) => m.name).join(', ')
     const weekNumber = getWeekNumber(new Date())
 
-    // Generar recetas con Claude
+    // Calcular cuántas recetas por categoría se necesitan (modo completar)
+    let categoryBlock = ''
+    let totalCount = 7
+
+    if (only_categories && only_categories.length > 0) {
+      const year = new Date().getFullYear()
+
+      const { data: status } = await supabase
+        .from('weekly_voting_status')
+        .select('desayunos_matched, comidas_matched, cenas_matched')
+        .eq('family_id', family_id)
+        .eq('week_number', weekNumber)
+        .eq('year', year)
+        .maybeSingle()
+
+      const matchedByCategory: Record<string, number> = {
+        desayuno: status?.desayunos_matched ?? 0,
+        comida:   status?.comidas_matched   ?? 0,
+        cena:     status?.cenas_matched     ?? 0,
+      }
+
+      const distribution: string[] = []
+      totalCount = 0
+
+      for (const cat of only_categories) {
+        const needed = Math.max(0, 7 - (matchedByCategory[cat] ?? 0))
+        if (needed === 0) continue
+        const toGenerate = needed * 2
+        distribution.push(`${toGenerate} de tipo "${cat}"`)
+        totalCount += toGenerate
+      }
+
+      if (totalCount === 0) {
+        return NextResponse.json({
+          success: true,
+          meals: [],
+          total: 0,
+          message: 'No se necesitan más recetas para estas categorías',
+        })
+      }
+
+      categoryBlock = `
+Genera SOLO recetas de tipo: ${only_categories.join(', ')}.
+Necesito exactamente ${totalCount} recetas en total distribuidas así: ${distribution.join(', ')}.
+Ya tenemos estas recetas esta semana, NO repetir: ${existingNames || 'ninguna'}.`
+    }
+
+    // Construir prompt
     const prompt = `Eres un chef mexicano experto en alimentación familiar saludable.
-Genera 7 recetas variadas para una semana (desayuno, comida, cena, snack).
+${only_categories
+  ? `Genera ${totalCount} recetas adicionales para completar el menú semanal.`
+  : 'Genera 7 recetas variadas para una semana (desayuno, comida, cena, snack).'}
 ${is_diabetic_friendly ? 'IMPORTANTE: Todas deben ser aptas para diabéticos (bajo índice glucémico).' : ''}
 ${preferences ? `Preferencias de la familia: ${preferences}` : ''}
-${existingNames ? `NO repitas estos platillos que ya tienen: ${existingNames}` : ''}
+${!only_categories && existingNames ? `NO repitas estos platillos que ya tienen: ${existingNames}` : ''}
+${categoryBlock}
 
 Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto adicional:
 {
@@ -145,6 +205,24 @@ Responde ÚNICAMENTE con un JSON válido, sin markdown ni texto adicional:
         ).catch(() => null)
       }
     }
+
+    // Actualizar weekly_voting_status: recetas generadas y votación activa
+    const year = new Date().getFullYear()
+    await Promise.resolve(
+      supabase
+        .from('weekly_voting_status')
+        .upsert(
+          {
+            family_id,
+            week_number: weekNumber,
+            year,
+            recipes_generated:    true,
+            recipes_generated_at: new Date().toISOString(),
+            voting_started:       true,
+          },
+          { onConflict: 'family_id,week_number,year' }
+        )
+    ).catch(() => null)
 
     return NextResponse.json({
       success: true,

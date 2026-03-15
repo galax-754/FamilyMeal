@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
 import { ReactNode } from 'react'
+import { UserMenu } from './UserMenu'
 
 interface PageHeaderProps {
   title: string
@@ -10,9 +11,10 @@ interface PageHeaderProps {
   back?: boolean
   backHref?: string
   action?: ReactNode
+  hideUserMenu?: boolean
 }
 
-export function PageHeader({ title, subtitle, back, backHref, action }: PageHeaderProps) {
+export function PageHeader({ title, subtitle, back, backHref, action, hideUserMenu }: PageHeaderProps) {
   const router = useRouter()
 
   const handleBack = () => {
@@ -43,9 +45,10 @@ export function PageHeader({ title, subtitle, back, backHref, action }: PageHead
           )}
         </div>
 
-        {action && (
-          <div className="page-header-action">{action}</div>
-        )}
+        <div className="page-header-action" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {action}
+          {!hideUserMenu && <UserMenu />}
+        </div>
       </div>
     </header>
   )
