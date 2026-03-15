@@ -1,13 +1,14 @@
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import { createClient } from '@/lib/supabase/server'
-import { searchFoodImage } from '@/lib/images'
 import { CLAUDE_API_KEY } from '@/config'
 
 const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY })
+const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 function getWeekNumber(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))
@@ -32,6 +33,55 @@ function parseRecetaJSON(text: string): any {
   }
 
   return JSON.parse(clean.substring(firstBrace, lastBrace + 1))
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function generarPromptImagen(receta: any): Promise<string> {
+  const ingredientesPrincipales = (receta.ingredients ?? [])
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .slice(0, 6)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((i: any) => `${i.quantity} ${i.unit} de ${i.name}`)
+    .join(', ')
+
+  const promptParaClaude = `Eres un director de fotografía gastronómica profesional.
+
+Genera un prompt en INGLÉS para DALL-E 3 que describa cómo debe verse este platillo en una foto profesional:
+
+PLATILLO: ${receta.name}
+DESCRIPCIÓN: ${receta.description}
+INGREDIENTES PRINCIPALES: ${ingredientesPrincipales}
+CATEGORÍA: ${receta.category}
+DIFICULTAD: ${receta.difficulty}
+
+El prompt debe describir:
+- Cómo se ve el platillo terminado y emplatado
+- Los colores y texturas visibles
+- El tipo de plato o bowl donde se sirve
+- La presentación y garnish
+- La iluminación y ambiente según la categoría:
+  Desayuno=luz matutina natural, Comida=luz de mediodía, Cena=luz cálida de noche
+- Estilo: food photography profesional, apetitoso, sin personas, sin texto
+
+Responde SOLO con el prompt en inglés, máximo 200 palabras. Sin explicaciones, sin comillas.`
+
+  try {
+    const msg = await anthropic.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 300,
+      messages:   [{ role: 'user', content: promptParaClaude }],
+    })
+
+    const prompt = msg.content[0].type === 'text' ? msg.content[0].text.trim() : ''
+    if (prompt) {
+      console.log('Prompt DALL-E generado:', prompt.substring(0, 100))
+      return prompt
+    }
+  } catch (err) {
+    console.error('Error generando prompt con Claude:', err)
+  }
+
+  return `Professional food photography of ${receta.name}, appetizing, restaurant quality presentation, warm lighting, shallow depth of field, no text, no people`
 }
 
 export async function POST(request: NextRequest) {
@@ -166,7 +216,6 @@ RESPONDE SOLO con este JSON sin texto adicional:
         console.log('✅ Receta generada:', receta.name)
       } catch (err) {
         console.error(`❌ Error generando receta de ${categoria}:`, err)
-        // Continuar con las demás categorías aunque una falle
       }
     }
 
@@ -175,11 +224,6 @@ RESPONDE SOLO con este JSON sin texto adicional:
     if (todasLasRecetas.length === 0) {
       return NextResponse.json({ error: 'No se pudieron generar recetas' }, { status: 500 })
     }
-
-    // Buscar imágenes en paralelo
-    const images = await Promise.all(
-      todasLasRecetas.map((r) => searchFoodImage(r.name, r.category))
-    )
 
     // Normalizar categorías al formato que acepta el CHECK constraint de la BD
     const categoryMap: Record<string, string> = {
@@ -199,10 +243,7 @@ RESPONDE SOLO con este JSON sin texto adicional:
 
     const savedMeals = []
 
-    for (let i = 0; i < todasLasRecetas.length; i++) {
-      const receta   = todasLasRecetas[i]
-      const imageUrl = images[i]
-
+    for (const receta of todasLasRecetas) {
       const normalizedCategory =
         categoryMap[receta.category] ||
         categoryMap[receta.category?.toLowerCase()] ||
@@ -211,6 +252,31 @@ RESPONDE SOLO con este JSON sin texto adicional:
       console.log('Categoría original:', receta.category)
       console.log('Categoría normalizada:', normalizedCategory)
 
+      // 1. Claude genera el prompt visual para DALL-E
+      const dallePrompt = await generarPromptImagen(receta)
+
+      // 2. DALL-E genera la imagen con ese prompt
+      let imageUrl: string | null = null
+      if (process.env.OPENAI_API_KEY) {
+        try {
+          const response = await openai.images.generate({
+            model:   'dall-e-3',
+            prompt:  dallePrompt,
+            n:       1,
+            size:    '1024x1024',
+            quality: 'standard',
+          })
+          imageUrl = response.data[0]?.url || null
+          console.log('✅ Imagen generada para:', receta.name)
+        } catch (imgError: unknown) {
+          const msg = imgError instanceof Error ? imgError.message : String(imgError)
+          console.error('Error DALL-E:', msg)
+        }
+      } else {
+        console.warn('OPENAI_API_KEY no configurada — sin imagen')
+      }
+
+      // 3. Guardar receta con imagen y prompt usado
       const { data: meal, error: mealError } = await supabase
         .from('meals')
         .insert({
@@ -227,7 +293,8 @@ RESPONDE SOLO con este JSON sin texto adicional:
           instructions:         receta.instructions     || [],
           chef_tip:             receta.chef_tip         || '',
           tags:                 receta.tags             || [],
-          image_url:            imageUrl                || null,
+          image_url:            imageUrl,
+          image_search_query:   dallePrompt.substring(0, 200),
           generated_by_ai:      true,
           family_id,
         })
