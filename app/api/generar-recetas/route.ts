@@ -6,6 +6,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import { createClient } from '@/lib/supabase/server'
 import { CLAUDE_API_KEY } from '@/config'
+import { uploadImageToStorage } from '@/lib/images'
 
 const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY })
 const openai    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -255,28 +256,7 @@ RESPONDE SOLO con este JSON sin texto adicional:
       // 1. Claude genera el prompt visual para DALL-E
       const dallePrompt = await generarPromptImagen(receta)
 
-      // 2. DALL-E genera la imagen con ese prompt
-      let imageUrl: string | null = null
-      if (process.env.OPENAI_API_KEY) {
-        try {
-          const response = await openai.images.generate({
-            model:   'dall-e-3',
-            prompt:  dallePrompt,
-            n:       1,
-            size:    '1024x1024',
-            quality: 'standard',
-          })
-          imageUrl = response.data[0]?.url || null
-          console.log('✅ Imagen generada para:', receta.name)
-        } catch (imgError: unknown) {
-          const msg = imgError instanceof Error ? imgError.message : String(imgError)
-          console.error('Error DALL-E:', msg)
-        }
-      } else {
-        console.warn('OPENAI_API_KEY no configurada — sin imagen')
-      }
-
-      // 3. Guardar receta con imagen y prompt usado
+      // 2. Insertar receta sin imagen para obtener el ID real
       const { data: meal, error: mealError } = await supabase
         .from('meals')
         .insert({
@@ -293,7 +273,7 @@ RESPONDE SOLO con este JSON sin texto adicional:
           instructions:         receta.instructions     || [],
           chef_tip:             receta.chef_tip         || '',
           tags:                 receta.tags             || [],
-          image_url:            imageUrl,
+          image_url:            null,
           image_search_query:   dallePrompt.substring(0, 200),
           generated_by_ai:      true,
           family_id,
@@ -302,6 +282,38 @@ RESPONDE SOLO con este JSON sin texto adicional:
         .single()
 
       console.log('Insert result:', meal?.id, 'Error:', JSON.stringify(mealError))
+
+      // 3. DALL-E genera la imagen y se sube a Storage con URL permanente
+      if (!mealError && meal && process.env.OPENAI_API_KEY) {
+        try {
+          const dalleResponse = await openai.images.generate({
+            model:   'dall-e-3',
+            prompt:  dallePrompt,
+            n:       1,
+            size:    '1024x1024',
+            quality: 'standard',
+          })
+          const tempUrl = dalleResponse.data[0]?.url
+          console.log('✅ Imagen DALL-E generada para:', receta.name)
+
+          if (tempUrl) {
+            const permanentUrl = await uploadImageToStorage(tempUrl, meal.id)
+            const finalUrl = permanentUrl || tempUrl
+
+            await supabase
+              .from('meals')
+              .update({ image_url: finalUrl })
+              .eq('id', meal.id)
+
+            meal.image_url = finalUrl
+          }
+        } catch (imgError: unknown) {
+          const msg = imgError instanceof Error ? imgError.message : String(imgError)
+          console.error('Error DALL-E / Storage:', msg)
+        }
+      } else if (!process.env.OPENAI_API_KEY) {
+        console.warn('OPENAI_API_KEY no configurada — sin imagen')
+      }
 
       if (!mealError && meal) {
         savedMeals.push(meal)

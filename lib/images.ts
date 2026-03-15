@@ -1,8 +1,54 @@
 import OpenAI from 'openai'
+import { createClient } from '@supabase/supabase-js'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 })
+
+// Cliente admin — usa service_role key para poder escribir en Storage
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('Supabase admin env vars no configuradas')
+  return createClient(url, key)
+}
+
+export async function uploadImageToStorage(
+  imageUrl: string,
+  mealId: string
+): Promise<string | null> {
+  try {
+    const res = await fetch(imageUrl)
+    if (!res.ok) throw new Error(`No se pudo descargar imagen: ${res.status}`)
+
+    const buffer  = await res.arrayBuffer()
+    const uint8   = new Uint8Array(buffer)
+    const fileName = `meals/${mealId}-${Date.now()}.png`
+
+    const supabaseAdmin = getSupabaseAdmin()
+
+    const { error } = await supabaseAdmin
+      .storage
+      .from('meal-images')
+      .upload(fileName, uint8, { contentType: 'image/png', upsert: true })
+
+    if (error) {
+      console.error('Error subiendo a Storage:', error.message)
+      return null
+    }
+
+    const { data: publicUrlData } = supabaseAdmin
+      .storage
+      .from('meal-images')
+      .getPublicUrl(fileName)
+
+    console.log('✅ Imagen guardada en Storage:', publicUrlData.publicUrl)
+    return publicUrlData.publicUrl
+  } catch (err) {
+    console.error('Error en uploadImageToStorage:', err)
+    return null
+  }
+}
 
 const FOOD_TRANSLATIONS: Record<string, string> = {
   chilaquiles:  'chilaquiles verdes mexican breakfast',

@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useCallback } from 'react'
+import { useRef, useCallback, useState, useEffect } from 'react'
 import Image from 'next/image'
 import { Clock, DollarSign, Utensils } from 'lucide-react'
 import { Meal, Profile, SwipeVote } from '@/types'
@@ -16,6 +16,7 @@ interface SwipeCardProps {
 }
 
 const AVATAR_COLORS = ['av-amber', 'av-pink', 'av-indigo', 'av-green']
+const SWIPE_THRESHOLD = 80 // px para activar voto
 
 export function SwipeCard({
   meal,
@@ -27,40 +28,207 @@ export function SwipeCard({
 }: SwipeCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
 
+  // ── Hint inicial ────────────────────────────────────────────
+  const [showHint, setShowHint] = useState(true)
+  useEffect(() => {
+    const timer = setTimeout(() => setShowHint(false), 3000)
+    return () => clearTimeout(timer)
+  }, [])
+
+  // ── Drag state ──────────────────────────────────────────────
+  const [dragStartX, setDragStartX]   = useState(0)
+  const [dragStartY, setDragStartY]   = useState(0)
+  const [dragOffset, setDragOffset]   = useState(0)
+  const [isDragging, setIsDragging]   = useState(false)
+  // Evitar detectar scroll vertical como swipe
+  const dragDirectionRef = useRef<'horizontal' | 'vertical' | null>(null)
+
   const currentUserVoted = swipeVotes.some((v) => v.profile_id === currentUserId)
   const ingredients  = Array.isArray(meal.ingredients)  ? meal.ingredients  : []
   const instructions = Array.isArray(meal.instructions) ? meal.instructions : []
 
+  // ── Animación de salida (compartida por botones y swipe) ─────
   const triggerLike = useCallback(() => {
     const el = cardRef.current
     if (!el) return
+    setDragOffset(0)
+    setIsDragging(false)
     el.style.transition = 'all 0.35s cubic-bezier(0.4,0,0.2,1)'
-    el.style.transform = 'translateX(120%) rotate(12deg)'
-    el.style.opacity = '0'
+    el.style.transform   = 'translateX(120%) rotate(12deg)'
+    el.style.opacity     = '0'
     setTimeout(() => onLike(meal.id), 350)
   }, [meal.id, onLike])
 
   const triggerPass = useCallback(() => {
     const el = cardRef.current
     if (!el) return
+    setDragOffset(0)
+    setIsDragging(false)
     el.style.transition = 'all 0.35s cubic-bezier(0.4,0,0.2,1)'
-    el.style.transform = 'translateX(-120%) rotate(-12deg)'
-    el.style.opacity = '0'
+    el.style.transform   = 'translateX(-120%) rotate(-12deg)'
+    el.style.opacity     = '0'
     setTimeout(() => onPass(meal.id), 350)
   }, [meal.id, onPass])
 
-  return (
-    <div ref={cardRef} style={{ position: 'relative' }}>
+  // ── Touch handlers ──────────────────────────────────────────
+  const handleTouchStart = (e: React.TouchEvent) => {
+    setDragStartX(e.touches[0].clientX)
+    setDragStartY(e.touches[0].clientY)
+    dragDirectionRef.current = null
+  }
 
-      {/* ── CONTENIDO SCROLLABLE ─────────────────────────── */}
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const dx = e.touches[0].clientX - dragStartX
+    const dy = e.touches[0].clientY - dragStartY
+
+    // Determinar dirección solo una vez por gesto
+    if (!dragDirectionRef.current) {
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        dragDirectionRef.current = 'horizontal'
+      } else if (Math.abs(dy) > 8) {
+        dragDirectionRef.current = 'vertical'
+      }
+    }
+
+    if (dragDirectionRef.current === 'horizontal') {
+      e.preventDefault() // evitar scroll mientras desliza
+      setIsDragging(true)
+      setDragOffset(dx)
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (dragDirectionRef.current === 'horizontal') {
+      if (dragOffset > SWIPE_THRESHOLD) {
+        triggerLike()
+      } else if (dragOffset < -SWIPE_THRESHOLD) {
+        triggerPass()
+      } else {
+        setDragOffset(0)
+        setIsDragging(false)
+      }
+    }
+    dragDirectionRef.current = null
+  }
+
+  // ── Mouse handlers (desktop) ────────────────────────────────
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setDragStartX(e.clientX)
+    setDragStartY(e.clientY)
+    dragDirectionRef.current = null
+  }
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (e.buttons !== 1) return // solo si botón izquierdo está presionado
+    const dx = e.clientX - dragStartX
+    const dy = e.clientY - dragStartY
+
+    if (!dragDirectionRef.current) {
+      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 8) {
+        dragDirectionRef.current = 'horizontal'
+      } else if (Math.abs(dy) > 8) {
+        dragDirectionRef.current = 'vertical'
+      }
+    }
+
+    if (dragDirectionRef.current === 'horizontal') {
+      setIsDragging(true)
+      setDragOffset(dx)
+    }
+  }
+
+  const handleMouseUp = () => {
+    if (dragDirectionRef.current === 'horizontal' && isDragging) {
+      if (dragOffset > SWIPE_THRESHOLD) {
+        triggerLike()
+      } else if (dragOffset < -SWIPE_THRESHOLD) {
+        triggerPass()
+      } else {
+        setDragOffset(0)
+        setIsDragging(false)
+      }
+    } else {
+      setDragOffset(0)
+      setIsDragging(false)
+    }
+    dragDirectionRef.current = null
+  }
+
+  // ── Estilos dinámicos ───────────────────────────────────────
+  const cardStyle: React.CSSProperties = {
+    position:   'relative',
+    transform:  `translateX(${dragOffset}px) rotate(${dragOffset * 0.05}deg)`,
+    transition: isDragging ? 'none' : 'transform 0.3s ease',
+    cursor:     isDragging ? 'grabbing' : 'grab',
+    userSelect: 'none',
+  }
+
+  const showLike = dragOffset > 30
+  const showPass = dragOffset < -30
+
+  return (
+    <div
+      ref={cardRef}
+      style={cardStyle}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
+      onMouseLeave={handleMouseUp}
+    >
+      {/* ── Label ME GUSTA ──────────────────────────────────── */}
+      {showLike && (
+        <div style={{
+          position:     'absolute',
+          top:          '20px',
+          left:         '20px',
+          background:   'rgba(34,197,94,0.9)',
+          color:        'white',
+          padding:      '8px 16px',
+          borderRadius: '8px',
+          fontSize:     '18px',
+          fontWeight:   800,
+          border:       '3px solid white',
+          zIndex:       10,
+          transform:    'rotate(-15deg)',
+          pointerEvents:'none',
+        }}>
+          ❤️ ME GUSTA
+        </div>
+      )}
+
+      {/* ── Label PASO ──────────────────────────────────────── */}
+      {showPass && (
+        <div style={{
+          position:     'absolute',
+          top:          '20px',
+          right:        '20px',
+          background:   'rgba(239,68,68,0.9)',
+          color:        'white',
+          padding:      '8px 16px',
+          borderRadius: '8px',
+          fontSize:     '18px',
+          fontWeight:   800,
+          border:       '3px solid white',
+          zIndex:       10,
+          transform:    'rotate(15deg)',
+          pointerEvents:'none',
+        }}>
+          ✕ PASO
+        </div>
+      )}
+
+      {/* ── CONTENIDO SCROLLABLE ─────────────────────────────── */}
       <div style={{
-        height: 'calc(100vh - 180px)',
-        overflowY: 'auto',
-        overflowX: 'hidden',
-        paddingBottom: '80px',
+        height:       'calc(100vh - 180px)',
+        overflowY:    'auto',
+        overflowX:    'hidden',
+        paddingBottom:'20px',
         borderRadius: 'var(--r)',
-        border: '1px solid var(--border)',
-        background: 'var(--surface)',
+        border:       '1px solid var(--border)',
+        background:   'var(--surface)',
       }}>
 
         {/* Imagen hero */}
@@ -233,9 +401,9 @@ export function SwipeCard({
           {/* Chef tip */}
           {meal.chef_tip && (
             <div style={{
-              padding: '14px',
-              background: 'var(--amber-soft)',
-              border: '1px solid rgba(245,158,11,0.25)',
+              padding:      '14px',
+              background:   'var(--amber-soft)',
+              border:       '1px solid rgba(245,158,11,0.25)',
               borderRadius: 'var(--r-sm)',
             }}>
               <div style={{
@@ -253,32 +421,43 @@ export function SwipeCard({
         </div>
       </div>
 
-      {/* ── BOTONES FIJOS EN EL BOTTOM ───────────────────── */}
-      <div style={{
-        position: 'fixed',
-        bottom: '70px',
-        left: 0,
-        right: 0,
-        padding: '12px 16px',
-        background: 'linear-gradient(to top, var(--bg) 80%, transparent)',
-        display: 'flex',
-        gap: '12px',
-        zIndex: 10,
-      }}>
-        <button
-          className="swipe-btn-pass"
-          onClick={triggerPass}
-          aria-label="Paso"
-        >
-          ✕
-        </button>
-        <button
-          className="swipe-btn-like"
-          onClick={triggerLike}
-        >
-          ♥ Me gusta
-        </button>
-      </div>
+      {/* ── HINT INICIAL (desaparece en 3s) ─────────────────── */}
+      {showHint && (
+        <div style={{
+          position:      'fixed',
+          bottom:        '90px',
+          left:          0,
+          right:         0,
+          display:       'flex',
+          justifyContent:'center',
+          gap:           '32px',
+          zIndex:        20,
+          animation:     'fadeOut 3s ease forwards',
+          pointerEvents: 'none',
+        }}>
+          <div style={{
+            display:    'flex',
+            alignItems: 'center',
+            gap:        '6px',
+            color:      'rgba(239,68,68,0.8)',
+            fontSize:   '13px',
+            fontWeight: 600,
+          }}>
+            ← Paso
+          </div>
+          <div style={{
+            display:    'flex',
+            alignItems: 'center',
+            gap:        '6px',
+            color:      'rgba(34,197,94,0.8)',
+            fontSize:   '13px',
+            fontWeight: 600,
+          }}>
+            Me gusta →
+          </div>
+        </div>
+      )}
+
 
     </div>
   )
