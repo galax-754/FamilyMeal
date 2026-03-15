@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useCallback } from 'react'
+import { useRef, useCallback } from 'react'
 import Image from 'next/image'
 import { Clock, DollarSign, Utensils } from 'lucide-react'
 import { Meal, Profile, SwipeVote } from '@/types'
@@ -26,20 +26,10 @@ export function SwipeCard({
   onPass,
 }: SwipeCardProps) {
   const cardRef = useRef<HTMLDivElement>(null)
-  const [deltaX, setDeltaX] = useState(0)
-  const isDragging = useRef(false)
-  const startX = useRef(0)
 
   const currentUserVoted = swipeVotes.some((v) => v.profile_id === currentUserId)
-
-  const resetPosition = useCallback(() => {
-    const el = cardRef.current
-    if (!el) return
-    el.style.transition = 'all 0.35s cubic-bezier(0.4,0,0.2,1)'
-    el.style.transform = ''
-    el.style.opacity = ''
-    setDeltaX(0)
-  }, [])
+  const ingredients  = Array.isArray(meal.ingredients)  ? meal.ingredients  : []
+  const instructions = Array.isArray(meal.instructions) ? meal.instructions : []
 
   const triggerLike = useCallback(() => {
     const el = cardRef.current
@@ -59,206 +49,237 @@ export function SwipeCard({
     setTimeout(() => onPass(meal.id), 350)
   }, [meal.id, onPass])
 
-  const handleDragEnd = useCallback(
-    (dx: number) => {
-      const THRESHOLD = 80
-      if (dx > THRESHOLD) triggerLike()
-      else if (dx < -THRESHOLD) triggerPass()
-      else resetPosition()
-    },
-    [triggerLike, triggerPass, resetPosition]
-  )
-
-  // ── Mouse events ──────────────────────────────────────
-  const onMouseDown = (e: React.MouseEvent) => {
-    isDragging.current = true
-    startX.current = e.clientX
-    const el = cardRef.current
-    if (el) el.style.transition = 'none'
-  }
-
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging.current) return
-    const dx = e.clientX - startX.current
-    setDeltaX(dx)
-    const el = cardRef.current
-    if (el) {
-      const rotate = dx * 0.08
-      el.style.transform = `translateX(${dx}px) rotate(${rotate}deg)`
-    }
-  }
-
-  const onMouseUp = (e: React.MouseEvent) => {
-    if (!isDragging.current) return
-    isDragging.current = false
-    handleDragEnd(e.clientX - startX.current)
-  }
-
-  const onMouseLeave = () => {
-    if (!isDragging.current) return
-    isDragging.current = false
-    resetPosition()
-  }
-
-  // ── Touch events ──────────────────────────────────────
-  const onTouchStart = (e: React.TouchEvent) => {
-    isDragging.current = true
-    startX.current = e.touches[0].clientX
-    const el = cardRef.current
-    if (el) el.style.transition = 'none'
-  }
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    if (!isDragging.current) return
-    const dx = e.touches[0].clientX - startX.current
-    setDeltaX(dx)
-    const el = cardRef.current
-    if (el) {
-      const rotate = dx * 0.08
-      el.style.transform = `translateX(${dx}px) rotate(${rotate}deg)`
-    }
-  }
-
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (!isDragging.current) return
-    isDragging.current = false
-    const dx = e.changedTouches[0].clientX - startX.current
-    handleDragEnd(dx)
-  }
-
-  const likeOpacity = Math.min(Math.max(deltaX / 120, 0), 1)
-  const passOpacity = Math.min(Math.max(-deltaX / 120, 0), 1)
-
   return (
-    <div
-      ref={cardRef}
-      className="swipe-card"
-      onMouseDown={onMouseDown}
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseLeave}
-      onTouchStart={onTouchStart}
-      onTouchMove={onTouchMove}
-      onTouchEnd={onTouchEnd}
-    >
-      {/* Labels flotantes */}
-      <div
-        className="swipe-label swipe-label-like"
-        style={{ opacity: likeOpacity }}
-      >
-        ♥ ME GUSTA
-      </div>
-      <div
-        className="swipe-label swipe-label-pass"
-        style={{ opacity: passOpacity }}
-      >
-        ✕ PASO
-      </div>
+    <div ref={cardRef} style={{ position: 'relative' }}>
 
-      {/* Imagen / Emoji */}
-      <div className="swipe-card-img">
-        {meal.image_url ? (
-          <>
-            <Image src={meal.image_url} alt={meal.name} fill style={{ objectFit: 'cover' }} />
-            <div className="meal-img-overlay-light" />
-          </>
-        ) : (
-          <div className="swipe-card-placeholder">
-            {meal.meal_emoji ? (
-              <span style={{ fontSize: 72 }}>{meal.meal_emoji}</span>
-            ) : (
-              <Utensils style={{ width: 56, height: 56, color: 'rgba(255,255,255,0.3)' }} />
+      {/* ── CONTENIDO SCROLLABLE ─────────────────────────── */}
+      <div style={{
+        height: 'calc(100vh - 180px)',
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        paddingBottom: '80px',
+        borderRadius: 'var(--r)',
+        border: '1px solid var(--border)',
+        background: 'var(--surface)',
+      }}>
+
+        {/* Imagen hero */}
+        <div style={{
+          width: '100%', height: '260px',
+          position: 'relative', background: 'var(--surface2)',
+          flexShrink: 0,
+        }}>
+          {meal.image_url ? (
+            <>
+              <Image
+                src={meal.image_url}
+                alt={meal.name}
+                fill
+                style={{ objectFit: 'cover' }}
+                unoptimized
+              />
+              <div className="meal-img-overlay-light" />
+            </>
+          ) : (
+            <div className="swipe-card-placeholder">
+              {meal.meal_emoji ? (
+                <span style={{ fontSize: 72 }}>{meal.meal_emoji}</span>
+              ) : (
+                <Utensils style={{ width: 56, height: 56, color: 'rgba(255,255,255,0.3)' }} />
+              )}
+            </div>
+          )}
+
+          {currentUserVoted && (
+            <div className="swipe-voted-badge">Ya votaste</div>
+          )}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '16px' }}>
+
+          {/* Categoría + nombre */}
+          <div style={{ marginBottom: '12px' }}>
+            <span className="badge badge-amber" style={{ marginBottom: '8px', display: 'inline-block' }}>
+              {meal.category}
+            </span>
+            {meal.is_diabetic_friendly && (
+              <span className="badge badge-green" style={{ marginLeft: '6px' }}>
+                🩺 Apto diabético
+              </span>
+            )}
+            <h2 style={{
+              fontSize: '20px', fontWeight: 900,
+              color: 'var(--text)', lineHeight: 1.2,
+              marginTop: '6px', marginBottom: '6px',
+            }}>
+              {meal.name}
+            </h2>
+            {meal.description && (
+              <p style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.6 }}>
+                {meal.description}
+              </p>
             )}
           </div>
-        )}
 
-        {currentUserVoted && (
-          <div className="swipe-voted-badge">Ya votaste</div>
-        )}
-      </div>
-
-      {/* Contenido */}
-      <div className="swipe-card-body">
-        <h2 className="swipe-meal-name">{meal.name}</h2>
-
-        {meal.description && (
-          <p className="swipe-meal-desc">{meal.description}</p>
-        )}
-
-        {/* Badges de info */}
-        <div className="swipe-badges-row">
-          {meal.estimated_cost != null && (
-            <span className="badge badge-amber">
-              <DollarSign style={{ width: 11, height: 11 }} />
-              ${meal.estimated_cost.toFixed(0)} MXN
-            </span>
-          )}
-          {meal.prep_time_minutes != null && (
-            <span className="badge badge-dark">
-              <Clock style={{ width: 11, height: 11 }} />
-              {formatPrepTime(meal.prep_time_minutes)}
-            </span>
-          )}
-          {meal.is_diabetic_friendly && (
-            <span className="badge badge-green">🩺 Apto diabético</span>
-          )}
-        </div>
-
-        {/* Votos de la familia */}
-        {members.length > 0 && (
-          <div className="swipe-family-votes">
-            <p className="swipe-family-title">Votos de la familia</p>
-            <div className="voters-row" style={{ gap: 10 }}>
-              {members.map((m, idx) => {
-                const vote = swipeVotes.find((v) => v.profile_id === m.id)
-                const colorClass = AVATAR_COLORS[idx % AVATAR_COLORS.length]
-                return (
-                  <div key={m.id} className="voter-item">
-                    <div className={`avatar avatar-sm ${colorClass}`}>
-                      {m.name.charAt(0).toUpperCase()}
-                    </div>
-                    {vote == null ? (
-                      <div
-                        className="voter-status voter-pending"
-                        style={{
-                          border: '1.5px solid rgba(255,255,255,0.15)',
-                          background: 'transparent',
-                        }}
-                      />
-                    ) : vote.vote ? (
-                      <div className="voter-status voter-voted">✓</div>
-                    ) : (
-                      <div
-                        className="voter-status"
-                        style={{ background: 'var(--red)', fontSize: 8 }}
-                      >
-                        ✕
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+          {/* Métricas */}
+          <div className="swipe-badges-row" style={{ marginBottom: '16px' }}>
+            {meal.estimated_cost != null && (
+              <span className="badge badge-amber">
+                <DollarSign style={{ width: 11, height: 11 }} />
+                ${meal.estimated_cost.toFixed(0)} MXN
+              </span>
+            )}
+            {meal.prep_time_minutes != null && (
+              <span className="badge badge-dark">
+                <Clock style={{ width: 11, height: 11 }} />
+                {formatPrepTime(meal.prep_time_minutes)}
+              </span>
+            )}
+            {meal.difficulty && (
+              <span className="badge badge-dark">👨‍🍳 {meal.difficulty}</span>
+            )}
           </div>
-        )}
 
-        {/* Botones PASS / LIKE */}
-        <div className="swipe-actions">
-          <button
-            className="swipe-btn-pass"
-            onClick={() => triggerPass()}
-            aria-label="Paso"
-          >
-            ✕
-          </button>
-          <button
-            className="swipe-btn-like"
-            onClick={() => triggerLike()}
-          >
-            ♥ Me gusta
-          </button>
+          {/* Votos de la familia */}
+          {members.length > 0 && (
+            <div className="swipe-family-votes" style={{ marginBottom: '20px' }}>
+              <p className="swipe-family-title">Votos de la familia</p>
+              <div className="voters-row" style={{ gap: 10 }}>
+                {members.map((m, idx) => {
+                  const vote = swipeVotes.find((v) => v.profile_id === m.id)
+                  const colorClass = AVATAR_COLORS[idx % AVATAR_COLORS.length]
+                  return (
+                    <div key={m.id} className="voter-item">
+                      <div className={`avatar avatar-sm ${colorClass}`}>
+                        {m.name.charAt(0).toUpperCase()}
+                      </div>
+                      {vote == null ? (
+                        <div
+                          className="voter-status voter-pending"
+                          style={{ border: '1.5px solid rgba(255,255,255,0.15)', background: 'transparent' }}
+                        />
+                      ) : vote.vote ? (
+                        <div className="voter-status voter-voted">✓</div>
+                      ) : (
+                        <div className="voter-status" style={{ background: 'var(--red)', fontSize: 8 }}>✕</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Ingredientes */}
+          {ingredients.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h3 style={{
+                fontSize: '13px', fontWeight: 800,
+                color: 'var(--text)', marginBottom: '10px',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+              }}>
+                🛒 Ingredientes
+              </h3>
+              {ingredients.map((ing, i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: 'flex', justifyContent: 'space-between',
+                    padding: '6px 0',
+                    borderBottom: '1px solid var(--border)',
+                    fontSize: '13px',
+                  }}
+                >
+                  <span style={{ color: 'var(--text)' }}>{ing.name}</span>
+                  <span style={{ color: 'var(--amber)', fontWeight: 600 }}>
+                    {ing.quantity} {ing.unit}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Instrucciones */}
+          {instructions.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h3 style={{
+                fontSize: '13px', fontWeight: 800,
+                color: 'var(--text)', marginBottom: '10px',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
+              }}>
+                📝 Preparación
+              </h3>
+              {instructions.map((inst, i) => (
+                <div
+                  key={i}
+                  style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}
+                >
+                  <div style={{
+                    fontSize: '11px', fontWeight: 700,
+                    color: 'var(--amber)', marginBottom: '4px',
+                    textTransform: 'uppercase',
+                  }}>
+                    PASO {inst.step} — {inst.title}
+                  </div>
+                  <p style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5, margin: 0 }}>
+                    {inst.text}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Chef tip */}
+          {meal.chef_tip && (
+            <div style={{
+              padding: '14px',
+              background: 'var(--amber-soft)',
+              border: '1px solid rgba(245,158,11,0.25)',
+              borderRadius: 'var(--r-sm)',
+            }}>
+              <div style={{
+                fontSize: '12px', fontWeight: 700,
+                color: 'var(--amber)', marginBottom: '6px',
+              }}>
+                👨‍🍳 Tip del chef
+              </div>
+              <p style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5, margin: 0 }}>
+                {meal.chef_tip}
+              </p>
+            </div>
+          )}
+
         </div>
       </div>
+
+      {/* ── BOTONES FIJOS EN EL BOTTOM ───────────────────── */}
+      <div style={{
+        position: 'fixed',
+        bottom: '70px',
+        left: 0,
+        right: 0,
+        padding: '12px 16px',
+        background: 'linear-gradient(to top, var(--bg) 80%, transparent)',
+        display: 'flex',
+        gap: '12px',
+        zIndex: 10,
+      }}>
+        <button
+          className="swipe-btn-pass"
+          onClick={triggerPass}
+          aria-label="Paso"
+        >
+          ✕
+        </button>
+        <button
+          className="swipe-btn-like"
+          onClick={triggerLike}
+        >
+          ♥ Me gusta
+        </button>
+      </div>
+
     </div>
   )
 }

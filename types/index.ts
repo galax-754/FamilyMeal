@@ -38,10 +38,13 @@ export interface Meal {
   created_by: string | null
   created_at: string
   updated_at: string
-  // Joined
+  difficulty?: string | null
+  chef_tip?: string | null
+  // Joined / JSONB
   vote_score?: number
   my_vote?: -1 | 0 | 1 | null
   ingredients?: Ingredient[]
+  instructions?: MealInstruction[]
 }
 
 export interface SwipeVote {
@@ -56,12 +59,19 @@ export interface SwipeVote {
 }
 
 export interface Ingredient {
-  id: string
-  meal_id: string
+  id?: string
+  meal_id?: string
   name: string
-  quantity: string | null
+  quantity: string | number | null
   unit: string | null
-  created_at: string
+  estimated_price_mxn?: number
+  created_at?: string
+}
+
+export interface MealInstruction {
+  step: number
+  title: string
+  text: string
 }
 
 export interface MealVote {
