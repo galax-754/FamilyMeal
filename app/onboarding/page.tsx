@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 
 type Step = 'verificando' | 'elegir' | 'crear' | 'unirse'
 
@@ -69,7 +70,10 @@ export default function OnboardingPage() {
         const { data: authData, error: authError } = await supabase.auth.signUp({
           email: email.trim(),
           password,
-          options: { data: { name: userName.trim() } },
+          options: {
+            data: { name: userName.trim() },
+            emailRedirectTo: `${window.location.origin}/auth/callback`,
+          },
         })
 
         if (authError) {
@@ -173,7 +177,10 @@ export default function OnboardingPage() {
           await supabase.auth.signUp({
             email: email.trim(),
             password,
-            options: { data: { name: userName.trim() } },
+            options: {
+              data: { name: userName.trim() },
+              emailRedirectTo: `${window.location.origin}/auth/callback`,
+            },
           })
 
         if (authError) {
@@ -362,10 +369,10 @@ export default function OnboardingPage() {
 
           <div className="field-group" style={{ marginBottom: '24px' }}>
             <label className="field-label">Contraseña</label>
-            <input type="password" className="input"
-              placeholder="Mínimo 6 caracteres"
+            <PasswordInput
               value={password}
-              onChange={e => setPassword(e.target.value)}
+              onChange={setPassword}
+              placeholder="Mínimo 6 caracteres"
             />
           </div>
 
@@ -435,10 +442,10 @@ export default function OnboardingPage() {
 
           <div className="field-group" style={{ marginBottom: '24px' }}>
             <label className="field-label">Contraseña</label>
-            <input type="password" className="input"
-              placeholder="Mínimo 6 caracteres"
+            <PasswordInput
               value={password}
-              onChange={e => setPassword(e.target.value)}
+              onChange={setPassword}
+              placeholder="Mínimo 6 caracteres"
             />
           </div>
 

@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { Users, Loader2 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
+import { PasswordInput } from '@/components/ui/PasswordInput'
 
 type Step = 'verificando' | 'error' | 'registro'
 
@@ -118,7 +119,10 @@ function UnirseContent() {
       const { data, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: { data: { name: nombre.trim() } },
+        options: {
+          data: { name: nombre.trim() },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
       })
       if (authError) throw authError
       if (data.user) {
@@ -244,10 +248,10 @@ function UnirseContent() {
             </div>
             <div className="form-field">
               <label className="form-label">Contraseña</label>
-              <input
-                type="password" value={password} className="input"
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
                 placeholder="Mínimo 6 caracteres"
-                onChange={e => setPassword(e.target.value)}
               />
             </div>
 
@@ -286,10 +290,10 @@ function UnirseContent() {
             </div>
             <div className="form-field">
               <label className="form-label">Contraseña</label>
-              <input
-                type="password" value={password} className="input"
+              <PasswordInput
+                value={password}
+                onChange={setPassword}
                 placeholder="Tu contraseña"
-                onChange={e => setPassword(e.target.value)}
               />
             </div>
 
