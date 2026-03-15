@@ -11,7 +11,7 @@ import { MealCardSkeleton } from '@/components/ui/Skeleton'
 import { ErrorMessage, EmptyState } from '@/components/ui/ErrorMessage'
 import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
-import { registrarVoto, getWeekNumber } from '@/lib/votes'
+import { registrarVoto } from '@/lib/votes'
 import { Meal, MealCategory, Profile, SwipeVote } from '@/types'
 import { getWeekStart, toDateString } from '@/lib/utils'
 
@@ -22,6 +22,13 @@ const FILTERS: Array<{ value: MealCategory | 'todas'; label: string }> = [
   { value: 'cena',     label: 'Cena' },
   { value: 'snack',    label: 'Snack' },
 ]
+
+function getWeekNumber(date: Date): number {
+  const firstDayOfYear = new Date(date.getFullYear(), 0, 1)
+  const pastDaysOfYear =
+    (date.getTime() - firstDayOfYear.getTime()) / 86400000
+  return Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7)
+}
 
 const TARGET = 7
 const CONFETTI_COLORS = ['#f59e0b', '#22c55e', '#60a5fa', '#ef4444', '#a78bfa', '#fb923c', '#34d399']
@@ -102,7 +109,7 @@ function ComidasContent() {
       ] = await Promise.all([
         supabase
           .from('meals')
-          .select('*, meal_votes(*), ingredients(*)')
+          .select('*, meal_votes(*)')
           .eq('family_id', prof.family_id)
           .order('created_at', { ascending: false }),
         supabase
