@@ -9,18 +9,23 @@ import { PasswordInput } from '@/components/ui/PasswordInput'
 
 type Step = 'verificando' | 'error' | 'registro'
 
+const AVATAR_COLORS = ['av-amber', 'av-pink', 'av-indigo', 'av-green']
+function getRandomColor() {
+  return AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)]
+}
+
 function UnirseContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
 
   const codigo = searchParams.get('codigo') ?? ''
 
-  const [step, setStep]           = useState<Step>('verificando')
+  const [step, setStep]             = useState<Step>('verificando')
   const [familyName, setFamilyName] = useState('')
-  const [familyId, setFamilyId]   = useState('')
-  const [loading, setLoading]     = useState(false)
-  const [error, setError]         = useState('')
-  const [mode, setMode]           = useState<'register' | 'login'>('register')
+  const [familyId, setFamilyId]     = useState('')
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
+  const [mode, setMode]             = useState<'register' | 'login'>('register')
 
   const [nombre, setNombre]     = useState('')
   const [email, setEmail]       = useState('')
@@ -41,17 +46,12 @@ function UnirseContent() {
     try {
       const { data: invitation, error: invError } = await supabase
         .from('family_invitations')
-        .select(`
-          family_id,
-          is_active,
-          code,
-          families (
-            id,
-            name
-          )
-        `)
+        .select('family_id, is_active, code, families(id, name)')
         .ilike('code', cleanCode)
+        .eq('is_active', true)
         .maybeSingle()
+
+      console.log('Invitación completa:', JSON.stringify(invitation))
 
       if (invError) {
         console.error('[unirse] Error Supabase:', invError)
@@ -70,10 +70,11 @@ function UnirseContent() {
 
       setFamilyName((family as { name: string } | null)?.name || 'tu familia')
       setFamilyId(invitation.family_id)
+      console.log('Family ID establecido:', invitation.family_id)
 
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        await unirseDirecto(user.id, invitation.family_id, cleanCode)
+        await asignarFamilia(user.id, '', invitation.family_id)
       } else {
         setStep('registro')
       }
@@ -83,28 +84,60 @@ function UnirseContent() {
     }
   }
 
-  async function unirseDirecto(userId: string, famId: string, code: string) {
-    const supabase = createClient()
-    const cleanCode = code.trim().toUpperCase()
+  // Función centralizada que asigna la familia al usuario y redirige
+  async function asignarFamilia(
+    userId: string,
+    displayName: string,
+    overrideFamilyId?: string,
+  ) {
+    const supabase  = createClient()
+    const famId     = overrideFamilyId || familyId
+    const cleanCode = codigo?.trim().toUpperCase()
 
-    const { error } = await supabase
+    console.log('Asignando familia:', famId, 'a usuario:', userId)
+
+    if (!famId) {
+      setError('Error: no se encontró el ID de la familia')
+      setLoading(false)
+      return
+    }
+
+    const { error: profileError } = await supabase
       .from('profiles')
-      .upsert({ id: userId, family_id: famId, role: 'member' }, { onConflict: 'id' })
+      .upsert(
+        {
+          id:           userId,
+          name:         displayName || nombre.trim() || undefined,
+          family_id:    famId,
+          role:         'member',
+          avatar_color: getRandomColor(),
+        },
+        { onConflict: 'id', ignoreDuplicates: false }
+      )
 
-    if (!error) {
+    console.log('Profile upsert error:', profileError)
+
+    if (profileError) {
+      setError('Error al unirse a la familia: ' + profileError.message)
+      setLoading(false)
+      return
+    }
+
+    // Incrementar uso de invitación
+    if (cleanCode) {
       const { data: current } = await supabase
         .from('family_invitations')
         .select('used_count')
-        .ilike('code', cleanCode)
+        .eq('code', cleanCode)
         .single()
 
       await supabase
         .from('family_invitations')
         .update({ used_count: (current?.used_count || 0) + 1 })
-        .ilike('code', cleanCode)
-
-      router.push('/preferencias')
+        .eq('code', cleanCode)
     }
+
+    router.push('/preferencias')
   }
 
   async function handleRegister() {
@@ -115,8 +148,9 @@ function UnirseContent() {
     setLoading(true)
     setError('')
     const supabase = createClient()
+
     try {
-      const { data, error: authError } = await supabase.auth.signUp({
+      const { data: authData, error: authError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
@@ -124,13 +158,39 @@ function UnirseContent() {
           emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       })
-      if (authError) throw authError
-      if (data.user) {
-        await unirseDirecto(data.user.id, familyId, codigo)
+
+      if (authError) {
+        // Email ya registrado — intentar login con las credenciales dadas
+        if (
+          authError.message.includes('already registered') ||
+          authError.message.includes('already been registered')
+        ) {
+          const { data: loginData, error: loginError } =
+            await supabase.auth.signInWithPassword({
+              email: email.trim(),
+              password,
+            })
+
+          if (loginError) {
+            setError('Este email ya tiene cuenta. Verifica tu contraseña o usa "Ya tengo cuenta".')
+            setLoading(false)
+            return
+          }
+
+          await asignarFamilia(loginData.user.id, nombre.trim())
+          return
+        }
+
+        setError(authError.message)
+        setLoading(false)
+        return
+      }
+
+      if (authData.user) {
+        await asignarFamilia(authData.user.id, nombre.trim())
       }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Algo salió mal')
-    } finally {
       setLoading(false)
     }
   }
@@ -143,18 +203,20 @@ function UnirseContent() {
     setLoading(true)
     setError('')
     const supabase = createClient()
-    try {
-      const { data, error: authError } = await supabase.auth.signInWithPassword({
+
+    const { data, error: loginError } =
+      await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       })
-      if (authError) throw authError
-      if (data.user) await unirseDirecto(data.user.id, familyId, codigo)
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Credenciales inválidas')
-    } finally {
+
+    if (loginError) {
+      setError('Email o contraseña incorrectos')
       setLoading(false)
+      return
     }
+
+    await asignarFamilia(data.user.id, nombre.trim())
   }
 
   // ── Verificando ──
@@ -262,7 +324,7 @@ function UnirseContent() {
               onClick={handleRegister}
               disabled={loading}
             >
-              {loading ? 'Creando cuenta...' : 'Crear cuenta y unirme →'}
+              {loading ? 'Procesando...' : 'Crear cuenta y unirme →'}
             </button>
 
             <p className="auth-footer">
