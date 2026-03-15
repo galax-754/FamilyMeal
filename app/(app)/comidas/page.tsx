@@ -161,15 +161,17 @@ function ComidasContent() {
   useEffect(() => { load() }, [load])
 
   const handleVote = async (mealId: string, vote: -1 | 0 | 1) => {
-    if (!userId) return
+    if (!userId || !familyId) return
+    const weekNumber = getWeekNumber(new Date())
+    const year = new Date().getFullYear()
     try {
       if (vote === 0) {
         await supabase.from('meal_votes').delete()
           .eq('meal_id', mealId).eq('profile_id', userId)
       } else {
         await supabase.from('meal_votes').upsert(
-          { meal_id: mealId, profile_id: userId, vote },
-          { onConflict: 'meal_id,profile_id' }
+          { meal_id: mealId, profile_id: userId, family_id: familyId, vote, week_number: weekNumber, year },
+          { onConflict: 'profile_id,meal_id,week_number,year' }
         )
       }
       setMeals((prev) =>
@@ -185,14 +187,14 @@ function ComidasContent() {
     }
   }
 
-  const checkForMatch = async (meal: Meal) => {
+  const checkForMatch = async (meal: Meal, fid: string) => {
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
 
     const { data: membersList } = await supabase
       .from('profiles')
       .select('id')
-      .eq('family_id', familyId)
+      .eq('family_id', fid)
 
     const totalMembers = membersList?.length || 1
 
@@ -200,7 +202,7 @@ function ComidasContent() {
       .from('meal_votes')
       .select('profile_id')
       .eq('meal_id', meal.id)
-      .eq('family_id', familyId)
+      .eq('family_id', fid)
       .eq('week_number', weekNumber)
       .eq('year', year)
       .eq('vote', true)
@@ -210,11 +212,11 @@ function ComidasContent() {
     console.log(`Match check: ${totalLikes}/${totalMembers} likes para ${meal.name}`)
 
     if (totalLikes >= totalMembers) {
-      await handleMatch(meal)
+      await handleMatch(meal, fid)
     }
   }
 
-  const handleMatch = async (meal: Meal) => {
+  const handleMatch = async (meal: Meal, fid: string) => {
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
 
@@ -222,7 +224,7 @@ function ComidasContent() {
       .from('weekly_menu')
       .select('id')
       .eq('meal_id', meal.id)
-      .eq('family_id', familyId)
+      .eq('family_id', fid)
       .eq('week_number', weekNumber)
       .eq('year', year)
       .maybeSingle()
@@ -232,7 +234,7 @@ function ComidasContent() {
     const { data: assignedDays } = await supabase
       .from('weekly_menu')
       .select('day_of_week, meals(category)')
-      .eq('family_id', familyId)
+      .eq('family_id', fid)
       .eq('week_number', weekNumber)
       .eq('year', year)
 
@@ -256,7 +258,7 @@ function ComidasContent() {
     const { error } = await supabase
       .from('weekly_menu')
       .insert({
-        family_id: familyId,
+        family_id: fid,
         meal_id: meal.id,
         day_of_week: nextDay,
         week_number: weekNumber,
@@ -272,7 +274,7 @@ function ComidasContent() {
         : 'cenas_matched'
 
       await supabase.rpc('increment_match_count', {
-        p_family_id: familyId,
+        p_family_id: fid,
         p_week_number: weekNumber,
         p_year: year,
         p_field: field
@@ -290,18 +292,40 @@ function ComidasContent() {
   }
 
   const handleSwipeVote = async (liked: boolean) => {
-    if (!userId || !familyId) return
+    if (!userId) return
+
+    // Garantizar que tenemos familyId aunque el estado no haya cargado aún
+    let currentFamilyId = familyId
+    if (!currentFamilyId) {
+      console.warn('familyId es null al votar — re-fetching desde profiles')
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('family_id')
+        .eq('id', userId)
+        .single()
+
+      if (profile?.family_id) {
+        setFamilyId(profile.family_id)
+        currentFamilyId = profile.family_id
+      } else {
+        console.error('No se pudo obtener family_id — abortando voto')
+        return
+      }
+    }
+
     const weekNumber = getWeekNumber(new Date())
     const year = new Date().getFullYear()
     const currentMeal = meals[swipeIndex]
     if (!currentMeal) return
+
+    console.log('Guardando voto con familyId:', currentFamilyId)
 
     const { error: voteError } = await supabase
       .from('meal_votes')
       .upsert({
         profile_id: userId,
         meal_id: currentMeal.id,
-        family_id: familyId,
+        family_id: currentFamilyId,
         vote: liked,
         week_number: weekNumber,
         year
@@ -311,10 +335,12 @@ function ComidasContent() {
 
     if (voteError) {
       console.error('Error guardando voto:', voteError)
+    } else {
+      console.log('Voto guardado. family_id usado:', currentFamilyId)
     }
 
     if (liked) {
-      await checkForMatch(currentMeal)
+      await checkForMatch(currentMeal, currentFamilyId)
     }
 
     setSwipeIndex(prev => prev + 1)
