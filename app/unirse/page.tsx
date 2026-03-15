@@ -72,9 +72,13 @@ function UnirseContent() {
       setFamilyId(invitation.family_id)
       console.log('Family ID establecido:', invitation.family_id)
 
+      // Guardar en localStorage como respaldo para cuando llegue el callback de email
+      localStorage.setItem('pending_family_id', invitation.family_id)
+      localStorage.setItem('pending_invite_code', cleanCode)
+
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        await asignarFamilia(user.id, '', invitation.family_id)
+        await completarRegistro(user.id)
       } else {
         setStep('registro')
       }
@@ -84,20 +88,19 @@ function UnirseContent() {
     }
   }
 
-  // Función centralizada que asigna la familia al usuario y redirige
-  async function asignarFamilia(
-    userId: string,
-    displayName: string,
-    overrideFamilyId?: string,
-  ) {
-    const supabase  = createClient()
-    const famId     = overrideFamilyId || familyId
-    const cleanCode = codigo?.trim().toUpperCase()
+  // Asigna family_id al perfil, verifica el resultado y redirige
+  async function completarRegistro(userId: string) {
+    const supabase = createClient()
 
-    console.log('Asignando familia:', famId, 'a usuario:', userId)
+    // Usa el estado React; si aún no está en memoria (ej. callback de email), cae al localStorage
+    const storedFamilyId = localStorage.getItem('pending_family_id')
+    const finalFamilyId  = familyId || storedFamilyId
+    const cleanCode      = localStorage.getItem('pending_invite_code') || codigo?.trim().toUpperCase()
 
-    if (!famId) {
-      setError('Error: no se encontró el ID de la familia')
+    console.log('Completando registro:', userId, finalFamilyId)
+
+    if (!finalFamilyId) {
+      setError('Error: no se encontró el código de invitación. Vuelve a abrir el link.')
       setLoading(false)
       return
     }
@@ -107,8 +110,8 @@ function UnirseContent() {
       .upsert(
         {
           id:           userId,
-          name:         displayName || nombre.trim() || undefined,
-          family_id:    famId,
+          name:         nombre.trim() || undefined,
+          family_id:    finalFamilyId,
           role:         'member',
           avatar_color: getRandomColor(),
         },
@@ -119,6 +122,21 @@ function UnirseContent() {
 
     if (profileError) {
       setError('Error al unirse a la familia: ' + profileError.message)
+      setLoading(false)
+      return
+    }
+
+    // Verificar que realmente se guardó el family_id
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('family_id')
+      .eq('id', userId)
+      .single()
+
+    console.log('Perfil guardado:', profile)
+
+    if (!profile?.family_id) {
+      setError('Error al asignar la familia. Intenta de nuevo.')
       setLoading(false)
       return
     }
@@ -137,6 +155,9 @@ function UnirseContent() {
         .eq('code', cleanCode)
     }
 
+    localStorage.removeItem('pending_family_id')
+    localStorage.removeItem('pending_invite_code')
+
     router.push('/preferencias')
   }
 
@@ -150,26 +171,20 @@ function UnirseContent() {
     const supabase = createClient()
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
-        options: {
-          data: { name: nombre.trim() },
-          emailRedirectTo: `${window.location.origin}/auth/callback`,
-        },
+        options: { data: { name: nombre.trim() } },
       })
 
-      if (authError) {
-        // Email ya registrado — intentar login con las credenciales dadas
+      if (signUpError) {
+        // Email ya registrado — intentar login directo
         if (
-          authError.message.includes('already registered') ||
-          authError.message.includes('already been registered')
+          signUpError.message.includes('already registered') ||
+          signUpError.message.includes('already been registered')
         ) {
           const { data: loginData, error: loginError } =
-            await supabase.auth.signInWithPassword({
-              email: email.trim(),
-              password,
-            })
+            await supabase.auth.signInWithPassword({ email: email.trim(), password })
 
           if (loginError) {
             setError('Este email ya tiene cuenta. Verifica tu contraseña o usa "Ya tengo cuenta".')
@@ -177,18 +192,25 @@ function UnirseContent() {
             return
           }
 
-          await asignarFamilia(loginData.user.id, nombre.trim())
+          await completarRegistro(loginData.user.id)
           return
         }
 
-        setError(authError.message)
+        throw signUpError
+      }
+
+      // Login inmediato para obtener sesión activa (sin esperar confirmación de email)
+      const { data: loginData, error: loginError } =
+        await supabase.auth.signInWithPassword({ email: email.trim(), password })
+
+      if (loginError) {
+        // Supabase tiene confirmación de email activa
+        setError('Revisa tu email para confirmar tu cuenta, luego regresa al link de invitación e inicia sesión.')
         setLoading(false)
         return
       }
 
-      if (authData.user) {
-        await asignarFamilia(authData.user.id, nombre.trim())
-      }
+      await completarRegistro(loginData.user.id)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Algo salió mal')
       setLoading(false)
@@ -205,10 +227,7 @@ function UnirseContent() {
     const supabase = createClient()
 
     const { data, error: loginError } =
-      await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      })
+      await supabase.auth.signInWithPassword({ email: email.trim(), password })
 
     if (loginError) {
       setError('Email o contraseña incorrectos')
@@ -216,7 +235,7 @@ function UnirseContent() {
       return
     }
 
-    await asignarFamilia(data.user.id, nombre.trim())
+    await completarRegistro(data.user.id)
   }
 
   // ── Verificando ──

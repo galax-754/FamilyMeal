@@ -1,5 +1,5 @@
 export const dynamic = 'force-dynamic'
-export const maxDuration = 120
+export const maxDuration = 60
 
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
@@ -85,16 +85,26 @@ Responde SOLO con el prompt en inglés, máximo 200 palabras. Sin explicaciones,
   return `Professional food photography of ${receta.name}, appetizing, restaurant quality presentation, warm lighting, shallow depth of field, no text, no people`
 }
 
+const VALID_CATEGORIES = ['Desayuno', 'Comida', 'Cena'] as const
+type Categoria = typeof VALID_CATEGORIES[number]
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { family_id }: { family_id: string } = body
+    const { family_id, categoria }: { family_id: string; categoria?: string } = body
 
     if (!family_id) {
       return NextResponse.json({ error: 'family_id requerido' }, { status: 400 })
     }
 
-    console.log('Family ID recibido:', family_id)
+    // Si no se especifica categoría, elegir una al azar
+    const categoriaTarget: Categoria = (
+      VALID_CATEGORIES.includes(categoria as Categoria)
+        ? categoria
+        : VALID_CATEGORIES[Math.floor(Math.random() * VALID_CATEGORIES.length)]
+    ) as Categoria
+
+    console.log('Family ID recibido:', family_id, '| Categoría:', categoriaTarget)
 
     const supabase = await createClient()
 
@@ -157,14 +167,9 @@ export async function POST(request: NextRequest) {
     const budgetWeekly  = (familyData?.budget_weekly as number | null) ?? 2500
     const budgetPerMeal = Math.round(budgetWeekly / 21) // 3 comidas × 7 días
 
-    // 3 llamadas separadas — 1 receta por categoría para evitar JSON truncado
-    const categorias = ['Desayuno', 'Comida', 'Cena']
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const todasLasRecetas: any[] = []
-
-    for (const categoria of categorias) {
-      const prompt = `Eres chef profesional mexicano con 20 años de experiencia.
-Genera EXACTAMENTE 1 receta de ${categoria} para 4 personas.
+    // Generar 1 receta para la categoría solicitada
+    const prompt = `Eres chef profesional mexicano con 20 años de experiencia.
+Genera EXACTAMENTE 1 receta de ${categoriaTarget} para 4 personas.
 Alto en proteína (mínimo 30g por porción).
 Presupuesto: $${budgetPerMeal} MXN por platillo.
 ${hasDiabetic ? 'OBLIGATORIO: apta para diabéticos, bajo índice glucémico.' : ''}
@@ -188,7 +193,7 @@ RESPONDE SOLO con este JSON sin texto adicional:
 {
   "name": "Nombre específico del platillo",
   "description": "2 oraciones apetitosas que hagan agua la boca",
-  "category": "${categoria.toLowerCase()}",
+  "category": "${categoriaTarget.toLowerCase()}",
   "emoji": "🍳",
   "estimated_cost": ${budgetPerMeal},
   "prep_time_minutes": 30,
@@ -204,29 +209,17 @@ RESPONDE SOLO con este JSON sin texto adicional:
   "tags": ["tag1", "tag2"]
 }`
 
-      try {
-        const message = await anthropic.messages.create({
-          model:      'claude-haiku-4-5-20251001',
-          max_tokens: 1500,
-          messages:   [{ role: 'user', content: prompt }],
-        })
+    const message = await anthropic.messages.create({
+      model:      'claude-haiku-4-5-20251001',
+      max_tokens: 1500,
+      messages:   [{ role: 'user', content: prompt }],
+    })
 
-        const text = message.content[0].type === 'text' ? message.content[0].text : ''
-        const receta = parseRecetaJSON(text)
-        todasLasRecetas.push(receta)
-        console.log('✅ Receta generada:', receta.name)
-      } catch (err) {
-        console.error(`❌ Error generando receta de ${categoria}:`, err)
-      }
-    }
+    const text   = message.content[0].type === 'text' ? message.content[0].text : ''
+    const receta = parseRecetaJSON(text)
+    console.log('✅ Receta generada:', receta.name)
 
-    console.log('Recetas generadas por Claude:', todasLasRecetas.length)
-
-    if (todasLasRecetas.length === 0) {
-      return NextResponse.json({ error: 'No se pudieron generar recetas' }, { status: 500 })
-    }
-
-    // Normalizar categorías al formato que acepta el CHECK constraint de la BD
+    // Normalizar categoría al formato que acepta el CHECK constraint de la BD
     const categoryMap: Record<string, string> = {
       desayuno:  'Desayuno',
       comida:    'Comida',
@@ -242,116 +235,100 @@ RESPONDE SOLO con este JSON sin texto adicional:
       Snack:     'Snack',
     }
 
-    const savedMeals = []
+    const normalizedCategory =
+      categoryMap[receta.category] ||
+      categoryMap[receta.category?.toLowerCase()] ||
+      categoriaTarget
 
-    for (const receta of todasLasRecetas) {
-      const normalizedCategory =
-        categoryMap[receta.category] ||
-        categoryMap[receta.category?.toLowerCase()] ||
-        'Comida'
+    // 1. Claude genera el prompt visual para DALL-E
+    const dallePrompt = await generarPromptImagen(receta)
 
-      console.log('Categoría original:', receta.category)
-      console.log('Categoría normalizada:', normalizedCategory)
+    // 2. Insertar receta sin imagen para obtener el ID real
+    const { data: meal, error: mealError } = await supabase
+      .from('meals')
+      .insert({
+        name:                 receta.name,
+        description:          receta.description,
+        category:             normalizedCategory,
+        meal_emoji:           receta.emoji            || '🍽️',
+        estimated_cost:       receta.estimated_cost   || 0,
+        prep_time_minutes:    receta.prep_time_minutes || 30,
+        is_diabetic_friendly: receta.is_diabetic_friendly ?? false,
+        is_healthy:           true,
+        difficulty:           receta.difficulty       || 'fácil',
+        ingredients:          receta.ingredients      || [],
+        instructions:         receta.instructions     || [],
+        chef_tip:             receta.chef_tip         || '',
+        tags:                 receta.tags             || [],
+        image_url:            null,
+        image_search_query:   dallePrompt.substring(0, 200),
+        generated_by_ai:      true,
+        family_id,
+      })
+      .select()
+      .single()
 
-      // 1. Claude genera el prompt visual para DALL-E
-      const dallePrompt = await generarPromptImagen(receta)
+    console.log('Insert result:', meal?.id, 'Error:', JSON.stringify(mealError))
 
-      // 2. Insertar receta sin imagen para obtener el ID real
-      const { data: meal, error: mealError } = await supabase
-        .from('meals')
-        .insert({
-          name:                 receta.name,
-          description:          receta.description,
-          category:             normalizedCategory,
-          meal_emoji:           receta.emoji            || '🍽️',
-          estimated_cost:       receta.estimated_cost   || 0,
-          prep_time_minutes:    receta.prep_time_minutes || 30,
-          is_diabetic_friendly: receta.is_diabetic_friendly ?? false,
-          is_healthy:           true,
-          difficulty:           receta.difficulty       || 'fácil',
-          ingredients:          receta.ingredients      || [],
-          instructions:         receta.instructions     || [],
-          chef_tip:             receta.chef_tip         || '',
-          tags:                 receta.tags             || [],
-          image_url:            null,
-          image_search_query:   dallePrompt.substring(0, 200),
-          generated_by_ai:      true,
-          family_id,
-        })
-        .select()
-        .single()
-
-      console.log('Insert result:', meal?.id, 'Error:', JSON.stringify(mealError))
-
-      // 3. DALL-E genera la imagen y se sube a Storage con URL permanente
-      if (!mealError && meal && process.env.OPENAI_API_KEY) {
-        try {
-          const dalleResponse = await openai.images.generate({
-            model:   'dall-e-3',
-            prompt:  dallePrompt,
-            n:       1,
-            size:    '1024x1024',
-            quality: 'standard',
-          })
-          const tempUrl = dalleResponse.data[0]?.url
-          console.log('✅ Imagen DALL-E generada para:', receta.name)
-
-          if (tempUrl) {
-            const permanentUrl = await uploadImageToStorage(tempUrl, meal.id)
-            const finalUrl = permanentUrl || tempUrl
-
-            await supabase
-              .from('meals')
-              .update({ image_url: finalUrl })
-              .eq('id', meal.id)
-
-            meal.image_url = finalUrl
-          }
-        } catch (imgError: unknown) {
-          const msg = imgError instanceof Error ? imgError.message : String(imgError)
-          console.error('Error DALL-E / Storage:', msg)
-        }
-      } else if (!process.env.OPENAI_API_KEY) {
-        console.warn('OPENAI_API_KEY no configurada — sin imagen')
-      }
-
-      if (!mealError && meal) {
-        savedMeals.push(meal)
-
-        await Promise.resolve(
-          supabase.from('generated_meals_history').insert({
-            family_id,
-            meal_name:   receta.name,
-            week_number: weekNumber,
-            year:        new Date().getFullYear(),
-          })
-        ).catch(() => null)
-      }
+    if (mealError || !meal) {
+      return NextResponse.json({ error: 'Error al guardar receta: ' + mealError?.message }, { status: 500 })
     }
 
-    // Actualizar weekly_voting_status
-    const year = new Date().getFullYear()
-    await Promise.resolve(
-      supabase
-        .from('weekly_voting_status')
-        .upsert(
-          {
-            family_id,
-            week_number:          weekNumber,
-            year,
-            recipes_generated:    true,
-            recipes_generated_at: new Date().toISOString(),
-            voting_started:       true,
-          },
-          { onConflict: 'family_id,week_number,year' }
-        )
-    ).catch(() => null)
+    // 3. DALL-E genera la imagen y se sube a Storage con URL permanente
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const dalleResponse = await openai.images.generate({
+          model:   'dall-e-3',
+          prompt:  dallePrompt,
+          n:       1,
+          size:    '1024x1024',
+          quality: 'standard',
+        })
+        const tempUrl = dalleResponse.data[0]?.url
+        console.log('✅ Imagen DALL-E generada para:', receta.name)
 
-    return NextResponse.json({
-      success: true,
-      meals:   savedMeals,
-      total:   savedMeals.length,
-    })
+        if (tempUrl) {
+          const permanentUrl = await uploadImageToStorage(tempUrl, meal.id)
+          const finalUrl = permanentUrl || tempUrl
+
+          await supabase
+            .from('meals')
+            .update({ image_url: finalUrl })
+            .eq('id', meal.id)
+
+          meal.image_url = finalUrl
+        }
+      } catch (imgError: unknown) {
+        const msg = imgError instanceof Error ? imgError.message : String(imgError)
+        console.error('Error DALL-E / Storage:', msg)
+      }
+    } else {
+      console.warn('OPENAI_API_KEY no configurada — sin imagen')
+    }
+
+    // Historial + estado de votación
+    const year = new Date().getFullYear()
+    await Promise.all([
+      supabase.from('generated_meals_history').insert({
+        family_id,
+        meal_name:   receta.name,
+        week_number: weekNumber,
+        year,
+      }).then(() => null).catch(() => null),
+      supabase.from('weekly_voting_status').upsert(
+        {
+          family_id,
+          week_number:          weekNumber,
+          year,
+          recipes_generated:    true,
+          recipes_generated_at: new Date().toISOString(),
+          voting_started:       true,
+        },
+        { onConflict: 'family_id,week_number,year' }
+      ).then(() => null).catch(() => null),
+    ])
+
+    return NextResponse.json({ success: true, meal })
   } catch (error) {
     console.error('Error en generar-recetas:', error)
     return NextResponse.json(

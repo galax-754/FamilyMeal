@@ -32,13 +32,31 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
   const [savingBudget, setSavingBudget] = useState(false)
   const [notifying, setNotifying] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [generatingStatus, setGeneratingStatus] = useState('')
+  const [generadas, setGeneradas] = useState(0)
+  const [progreso, setProgreso] = useState(0)
   const [memberPrefs, setMemberPrefs] = useState<Record<string, boolean>>({})
   const [prefsLoaded, setPrefsLoaded] = useState(false)
+  const [totalMeals, setTotalMeals] = useState(0)
+  const [cantidadExtra, setCantidadExtra] = useState(3)
+  const [categoriaExtra, setCategoriaExtra] = useState('todas')
 
   const toast = useToast()
   const supabase = createClient()
 
-  // Cargar estado de preferencias al montar
+  const loadMealCount = async () => {
+    try {
+      const { count } = await supabase
+        .from('meals')
+        .select('id', { count: 'exact', head: true })
+        .eq('family_id', family.id)
+      setTotalMeals(count ?? 0)
+    } catch {
+      // no bloquear
+    }
+  }
+
+  // Cargar estado de preferencias y cantidad de recetas al montar
   useEffect(() => {
     const loadPrefs = async () => {
       try {
@@ -64,6 +82,7 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
       }
     }
     loadPrefs()
+    loadMealCount()
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [family.id])
 
@@ -107,21 +126,115 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
   }
 
   const generarRecetas = async () => {
-    setGenerating(true)
-    try {
-      const res = await fetch('/api/generar-recetas', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ family_id: family.id }),
-      })
-      if (!res.ok) throw new Error()
-      toast.success('¡Recetas generadas! Ya pueden votar.')
-      onUpdate()
-    } catch {
-      toast.error('No se pudo generar el catálogo de recetas.')
-    } finally {
-      setGenerating(false)
+    const plan = [
+      ...Array(7).fill('Desayuno'),
+      ...Array(7).fill('Comida'),
+      ...Array(7).fill('Cena'),
+    ]
+    const GRUPO_SIZE = 3
+    const grupos: string[][] = []
+    for (let i = 0; i < plan.length; i += GRUPO_SIZE) {
+      grupos.push(plan.slice(i, i + GRUPO_SIZE))
     }
+
+    setGenerating(true)
+    setGeneradas(0)
+    setProgreso(0)
+    let totalGeneradas = 0
+
+    for (let g = 0; g < grupos.length; g++) {
+      const grupo = grupos[g]
+      setGeneratingStatus(
+        `Grupo ${g + 1}/${grupos.length} — ${totalGeneradas} de 21 listas...`
+      )
+
+      const resultados = await Promise.allSettled(
+        grupo.map(categoria =>
+          fetch('/api/generar-recetas', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ family_id: family.id, categoria }),
+          }).then(r => r.json())
+        )
+      )
+
+      for (const resultado of resultados) {
+        if (resultado.status === 'fulfilled' && resultado.value?.success) {
+          totalGeneradas++
+          console.log('✅ Generada:', resultado.value.meal?.name)
+        }
+      }
+
+      setGeneradas(totalGeneradas)
+      setProgreso(Math.round((totalGeneradas / 21) * 100))
+
+      if (g < grupos.length - 1) {
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    }
+
+    setGenerating(false)
+    setGeneratingStatus('')
+
+    if (totalGeneradas >= 18) {
+      toast.success(`🎉 ¡${totalGeneradas} recetas listas para votar!`)
+      onUpdate()
+    } else if (totalGeneradas > 0) {
+      toast.success(`✅ ${totalGeneradas} recetas. Genera más si faltan.`)
+      onUpdate()
+    } else {
+      toast.error('No se pudo generar el catálogo de recetas.')
+    }
+    await loadMealCount()
+  }
+
+  const generarMasRecetas = async () => {
+    let categorias: string[] = []
+    if (categoriaExtra === 'todas') {
+      const porCat = Math.floor(cantidadExtra / 3)
+      const extra  = cantidadExtra % 3
+      for (let i = 0; i < porCat; i++) categorias.push('Desayuno', 'Comida', 'Cena')
+      categorias.push(...['Desayuno', 'Comida', 'Cena'].slice(0, extra))
+    } else {
+      categorias = Array(cantidadExtra).fill(categoriaExtra)
+    }
+
+    setGenerating(true)
+    let totalGeneradas = 0
+
+    for (let i = 0; i < categorias.length; i += 3) {
+      const grupo = categorias.slice(i, i + 3)
+      setGeneratingStatus(
+        `Generando ${totalGeneradas + 1}–${Math.min(totalGeneradas + grupo.length, categorias.length)} de ${categorias.length}...`
+      )
+
+      const resultados = await Promise.allSettled(
+        grupo.map(cat =>
+          fetch('/api/generar-recetas', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ family_id: family.id, categoria: cat }),
+          }).then(r => r.json())
+        )
+      )
+
+      for (const r of resultados) {
+        if (r.status === 'fulfilled' && r.value?.success) {
+          totalGeneradas++
+          console.log('✅ Extra generada:', r.value.meal?.name)
+        }
+      }
+
+      if (i + 3 < categorias.length) {
+        await new Promise(r => setTimeout(r, 1000))
+      }
+    }
+
+    setGenerating(false)
+    setGeneratingStatus('')
+    toast.success(`✅ ${totalGeneradas} recetas adicionales generadas`)
+    onUpdate()
+    await loadMealCount()
   }
 
   const allFilled = prefsLoaded && members.every((m) => memberPrefs[m.id])
@@ -230,26 +343,121 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
             }
           </p>
 
-          <Button
-            fullWidth
-            variant={allFilled ? 'primary' : 'outline'}
-            loading={generating}
-            onClick={generarRecetas}
-            disabled={!allFilled && prefsLoaded}
-            icon={generating
-              ? <Loader2 style={{ width: 18, height: 18, animation: 'spin 1s linear infinite' }} />
-              : <Sparkles style={{ width: 18, height: 18 }} />
-            }
-          >
-            {generating ? 'Generando...' : 'Generar catálogo de recetas'}
-          </Button>
+          <div>
+            <p style={{ fontSize: 12, color: 'var(--muted)', textAlign: 'center', marginBottom: 8 }}>
+              ⏱ Tarda ~3 minutos. No cierres la app.
+            </p>
 
-          {!allFilled && prefsLoaded && (
+            <button
+              className="btn-primary"
+              onClick={generarRecetas}
+              disabled={generating || (!allFilled && prefsLoaded)}
+              style={{ width: '100%' }}
+            >
+              {generating
+                ? (generatingStatus || 'Generando...')
+                : '✨ Generar catálogo de recetas (21)'}
+            </button>
+
+            {generating && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{
+                  height: 4,
+                  background: 'var(--surface2)',
+                  borderRadius: 4,
+                  overflow: 'hidden',
+                }}>
+                  <div style={{
+                    height: '100%',
+                    background: 'linear-gradient(90deg, var(--amber), var(--amber-dark, var(--amber)))',
+                    width: `${progreso}%`,
+                    borderRadius: 4,
+                    transition: 'width 0.5s ease',
+                  }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>{generadas}/21 recetas</span>
+                  <span style={{ fontSize: 11, color: 'var(--amber)' }}>{progreso}%</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {!allFilled && prefsLoaded && !generating && (
             <p style={{ fontSize: 11, color: 'var(--hint)', textAlign: 'center' }}>
               Disponible cuando todos los miembros llenen sus preferencias
             </p>
           )}
         </div>
+
+        {totalMeals > 0 && (
+          <div className="card" style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>
+              ➕ Generar más recetas
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', fontWeight: 700 }}>
+                ¿Cuántas?
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                {[3, 6, 9].map(n => (
+                  <button
+                    key={n}
+                    onClick={() => setCantidadExtra(n)}
+                    style={{
+                      flex: 1, padding: 8,
+                      borderRadius: 'var(--r-sm)',
+                      border: cantidadExtra === n ? '1.5px solid var(--amber)' : '1.5px solid var(--border)',
+                      background: cantidadExtra === n ? 'var(--amber-soft)' : 'var(--surface)',
+                      color: cantidadExtra === n ? 'var(--amber)' : 'var(--muted)',
+                      cursor: 'pointer', fontSize: 14, fontWeight: 700,
+                      fontFamily: 'Inter, sans-serif',
+                    }}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase', fontWeight: 700 }}>
+                ¿De qué tipo?
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['todas', 'Desayuno', 'Comida', 'Cena'].map(cat => (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoriaExtra(cat)}
+                    style={{
+                      padding: '6px 14px',
+                      borderRadius: 50,
+                      border: categoriaExtra === cat ? '1.5px solid var(--amber)' : '1.5px solid var(--border)',
+                      background: categoriaExtra === cat ? 'var(--amber-soft)' : 'var(--surface)',
+                      color: categoriaExtra === cat ? 'var(--amber)' : 'var(--muted)',
+                      cursor: 'pointer', fontSize: 12, fontWeight: 600,
+                      fontFamily: 'Inter, sans-serif',
+                    }}
+                  >
+                    {cat === 'todas' ? '🍽️ Todas' : cat === 'Desayuno' ? '🌅 Desayuno' : cat === 'Comida' ? '☀️ Comida' : '🌙 Cena'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              className="btn-ghost"
+              onClick={generarMasRecetas}
+              disabled={generating}
+              style={{ width: '100%' }}
+            >
+              {generating
+                ? (generatingStatus || 'Generando...')
+                : `Generar ${cantidadExtra} receta${cantidadExtra > 1 ? 's' : ''} más`}
+            </button>
+          </div>
+        )}
       </section>
     </>
   )
