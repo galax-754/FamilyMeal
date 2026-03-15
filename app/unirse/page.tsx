@@ -42,7 +42,7 @@ function UnirseContent() {
         const { data: inv } = await supabase
           .from('family_invitations')
           .select('family_id, is_active, families(id, name)')
-          .eq('code', cleanCode)
+          .ilike('code', cleanCode)
           .eq('is_active', true)
           .maybeSingle()
 
@@ -68,13 +68,13 @@ function UnirseContent() {
     const { data: current } = await supabase
       .from('family_invitations')
       .select('used_count')
-      .eq('code', cleanCode)
+      .ilike('code', cleanCode)
       .single()
 
     await supabase
       .from('family_invitations')
       .update({ used_count: (current?.used_count || 0) + 1 })
-      .eq('code', cleanCode)
+      .ilike('code', cleanCode)
 
     toast.success(`¡Te uniste a ${family.name}!`)
     router.push('/preferencias')

@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 
     const { data: family } = await supabase
       .from('families')
-      .select('id, name, invite_code')
+      .select('id, name')
       .eq('id', family_id)
       .single()
 
@@ -24,13 +24,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Familia no encontrada' }, { status: 404 })
     }
 
+    // Buscar invitación activa en family_invitations
+    const { data: invitation } = await supabase
+      .from('family_invitations')
+      .select('code')
+      .eq('family_id', family_id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (!invitation) {
+      return NextResponse.json({ error: 'No hay invitación activa para esta familia' }, { status: 404 })
+    }
+
+    const code = invitation.code.toUpperCase()
     const baseUrl = req.nextUrl.origin
-    const invite_link = `${baseUrl}/unirse?codigo=${family.invite_code}`
+    const invite_link = `${baseUrl}/unirse?codigo=${code}`
 
     return NextResponse.json({
       family_id: family.id,
       family_name: family.name,
-      invite_code: family.invite_code,
+      invite_code: code,
       invite_link,
     })
   } catch (err) {
