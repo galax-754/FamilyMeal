@@ -62,6 +62,7 @@ export default function FamiliaPage() {
   const [menuProgress, setMenuProgress] = useState<MenuProgress | null>(null)
   const [matchMode, setMatchMode] = useState<string>('full')
   const [actionLoading, setActionLoading] = useState(false)
+  const [updatingImages, setUpdatingImages] = useState(false)
   const [memberPrefsStatus, setMemberPrefsStatus] = useState<Record<string, boolean>>({})
   const [mealsByCategory, setMealsByCategory] = useState<Record<string, number>>({})
 
@@ -571,6 +572,36 @@ export default function FamiliaPage() {
             members={members}
             onUpdate={loadFamilyData}
           />
+        )}
+
+        {/* ── ACTUALIZAR IMÁGENES (solo admin) ────────────── */}
+        {isAdmin && family && (
+          <section>
+            <button
+              onClick={async () => {
+                setUpdatingImages(true)
+                try {
+                  const res = await fetch('/api/actualizar-imagenes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ family_id: family.id }),
+                  })
+                  const data = await res.json()
+                  if (!res.ok) throw new Error(data.error)
+                  toast.success(`${data.updated} imágenes actualizadas correctamente`)
+                } catch {
+                  toast.error('No se pudieron actualizar las imágenes.')
+                } finally {
+                  setUpdatingImages(false)
+                }
+              }}
+              disabled={updatingImages}
+              className="btn-ghost"
+              style={{ width: '100%' }}
+            >
+              {updatingImages ? '🔄 Actualizando imágenes...' : '🖼️ Actualizar imágenes de recetas'}
+            </button>
+          </section>
         )}
 
         {/* ── CERRAR SESIÓN ───────────────────────────────── */}
