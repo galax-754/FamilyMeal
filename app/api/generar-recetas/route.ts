@@ -1,3 +1,6 @@
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@/lib/supabase/server'
@@ -5,8 +8,6 @@ import { searchFoodImage, buildSearchQuery } from '@/lib/images'
 import { CLAUDE_API_KEY } from '@/config'
 
 const anthropic = new Anthropic({ apiKey: CLAUDE_API_KEY })
-
-export const maxDuration = 60
 
 function getWeekNumber(date: Date): number {
   const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()))

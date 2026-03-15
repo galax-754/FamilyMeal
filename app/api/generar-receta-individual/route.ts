@@ -1,3 +1,6 @@
+export const dynamic = 'force-dynamic'
+export const maxDuration = 60
+
 import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 
@@ -10,8 +13,6 @@ interface IngredientItem {
   quantity: number
   unit: string
 }
-
-export const maxDuration = 60
 
 export async function POST(req: NextRequest) {
   const {
