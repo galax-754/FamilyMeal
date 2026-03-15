@@ -100,9 +100,7 @@ export async function POST(request: NextRequest) {
       if (pref.is_diabetic) hasDiabetic = true
     }
 
-    const budgetPerMeal = familyData?.budget_weekly
-      ? Math.round((familyData.budget_weekly as number) / 21)
-      : 80
+    const budgetWeekly = (familyData?.budget_weekly as number | null) ?? 0
 
     const recentMeals = (existingMeals ?? []).map((m) => m.name)
     const weekNumber  = getWeekNumber(new Date())
@@ -113,7 +111,7 @@ Genera exactamente 3 recetas para familia mexicana:
 1 Desayuno, 1 Comida, 1 Cena.
 
 FAMILIA:
-- Presupuesto por receta: $${budgetPerMeal} MXN
+- Usa ingredientes económicos disponibles en HEB México. La familia tiene $${budgetWeekly > 0 ? budgetWeekly : 2500} MXN semanales para todas las comidas.
 - Les gusta: ${Array.from(allLikes).slice(0, 8).join(', ') || 'variado'}
 - No les gusta: ${Array.from(allDislikes).slice(0, 5).join(', ') || 'ninguno'}
 - Alergias: ${Array.from(allAllergies).join(', ') || 'ninguna'}
@@ -128,7 +126,7 @@ Responde SOLO con JSON sin texto adicional:
       "description": "Una oración apetitosa",
       "category": "desayuno",
       "emoji": "🍳",
-      "estimated_cost": 80,
+      "estimated_cost": 120,
       "prep_time_minutes": 20,
       "is_diabetic_friendly": false,
       "difficulty": "fácil",

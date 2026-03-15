@@ -45,6 +45,18 @@ function roundQuantity(qty: number): number {
   return Math.round(qty)
 }
 
+function calcularPresentaciones(
+  cantidadNecesaria: number,
+  packageSize: number,
+  precioUnitario: number,
+): { cantidad: number; costo: number } {
+  const presentaciones = Math.ceil(cantidadNecesaria / packageSize)
+  return {
+    cantidad: presentaciones,
+    costo: Math.round(presentaciones * precioUnitario * 100) / 100,
+  }
+}
+
 function parseQuantity(raw: string | number | null | undefined): number {
   if (!raw) return 1
   if (typeof raw === 'number') return raw
@@ -56,11 +68,13 @@ export interface ShoppingItem {
   ingredient_name: string
   heb_product_name: string | null
   heb_search_name: string
-  quantity: number
+  quantity: number          // cantidad necesaria total (suma de todas las recetas)
   unit: string
   category: string
-  estimated_price: number
+  estimated_price: number   // costo real = presentaciones × precio_presentación
   price_per_unit: number | null
+  packages_needed: number | null  // cuántas presentaciones comprar
+  package_size: number | null     // unidades por presentación
   found_in_heb: boolean
   used_in_meals: string[]
   checked: boolean
@@ -145,11 +159,16 @@ export async function POST(req: NextRequest) {
     // Si no existe el catálogo, todos los items tendrán found_in_heb = false
     const { data: hebCatalog } = await supabase
       .from('ingredients')
-      .select('name, heb_product_name, price_mxn, category')
+      .select('name, heb_product_name, price_mxn, category, package_size')
       .is('meal_id', null) // Ingredientes sin meal_id son del catálogo global
       .limit(500)
 
-    const hebMap = new Map<string, { heb_product_name?: string; price_mxn?: number; category?: string }>()
+    const hebMap = new Map<string, {
+      heb_product_name?: string
+      price_mxn?: number
+      category?: string
+      package_size?: number
+    }>()
     if (hebCatalog) {
       for (const heb of hebCatalog) {
         if (heb.name) hebMap.set(heb.name.toLowerCase().trim(), heb)
@@ -201,24 +220,37 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const pricePerUnit = (hebMatch as { price_mxn?: number } | undefined)?.price_mxn ?? null
-      const finalPrice = pricePerUnit ? pricePerUnit * roundQuantity(ing.quantity) : 0
+      const pricePerPackage = hebMatch?.price_mxn ?? null
+      const packageSize     = hebMatch?.package_size ?? 1
+      const neededQty       = roundQuantity(ing.quantity)
+
+      let finalPrice    = 0
+      let packagesNeeded: number | null = null
+
+      if (pricePerPackage) {
+        const calc = calcularPresentaciones(neededQty, packageSize, pricePerPackage)
+        packagesNeeded = calc.cantidad
+        finalPrice     = calc.costo
+      }
+
       totalCost += finalPrice
 
-      const category = (hebMatch as { category?: string } | undefined)?.category || inferCategory(ing.name)
+      const category = hebMatch?.category || inferCategory(ing.name)
 
       items.push({
-        ingredient_name: ing.name,
-        heb_product_name: (hebMatch as { heb_product_name?: string } | undefined)?.heb_product_name ?? null,
-        heb_search_name: (hebMatch as { heb_product_name?: string } | undefined)?.heb_product_name ?? ing.name,
-        quantity: roundQuantity(ing.quantity),
-        unit: ing.unit,
+        ingredient_name:  ing.name,
+        heb_product_name: hebMatch?.heb_product_name ?? null,
+        heb_search_name:  hebMatch?.heb_product_name ?? ing.name,
+        quantity:         neededQty,
+        unit:             ing.unit,
         category,
-        estimated_price: Math.round(finalPrice * 100) / 100,
-        price_per_unit: pricePerUnit,
-        found_in_heb: !!hebMatch,
-        used_in_meals: ing.used_in_meals,
-        checked: false,
+        estimated_price:  finalPrice,
+        price_per_unit:   pricePerPackage,
+        packages_needed:  packagesNeeded,
+        package_size:     packageSize > 1 ? packageSize : null,
+        found_in_heb:     !!hebMatch,
+        used_in_meals:    ing.used_in_meals,
+        checked:          false,
       })
     }
 
