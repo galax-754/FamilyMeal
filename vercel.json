@@ -1,0 +1,13 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "next build",
+  "devCommand": "next dev",
+  "installCommand": "npm install",
+  "env": {
+    "NEXT_PUBLIC_SUPABASE_URL": "@supabase_url",
+    "NEXT_PUBLIC_SUPABASE_ANON": "@supabase_anon",
+    "CLAUDE_API_KEY": "@claude_api_key",
+    "GROQ_API_KEY": "@groq_api_key",
+    "UNSPLASH_ACCESS_KEY": "@unsplash_access_key"
+  }
+}
