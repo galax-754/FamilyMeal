@@ -99,7 +99,7 @@ export default function FamiliaPage() {
       const year = new Date().getFullYear()
       const weekStart = toDateString(getWeekStart())
 
-      const [{ data: membersData }, { data: weeklyMenuData }, { data: votingStatus }] = await Promise.all([
+      const [{ data: membersData }, { data: weeklyMenuData }, { data: votingStatus }, { data: preferencesData }] = await Promise.all([
         supabase
           .from('profiles')
           .select('id, name, role')
@@ -117,27 +117,23 @@ export default function FamiliaPage() {
           .eq('week_number', weekNumber)
           .eq('year', year)
           .maybeSingle(),
+        supabase
+          .from('user_preferences')
+          .select('profile_id, preferences_completed')
+          .eq('family_id', profile.family_id)
+          .eq('preferences_completed', true),
       ])
 
       const membersList = (membersData ?? []) as MemberData[]
       setMembers(membersList)
 
-      // Verificar preferencias completadas de cada miembro (sin filtro de semana)
-      const prefsResults = await Promise.all(
-        membersList.map((m) =>
-          supabase
-            .from('user_preferences')
-            .select('id')
-            .eq('profile_id', m.id)
-            .eq('preferences_completed', true)
-            .limit(1)
-            .maybeSingle()
-        )
-      )
       const statusMap: Record<string, boolean> = {}
-      membersList.forEach((m, i) => {
-        statusMap[m.id] = !!prefsResults[i].data
-      })
+      for (const member of membersList) {
+        const completado = (preferencesData ?? []).find(
+          (pref) => pref.profile_id === member.id && pref.preferences_completed === true
+        )
+        statusMap[member.id] = !!completado
+      }
       setMemberPrefsStatus(statusMap)
 
       // Conteos directamente del weekly_menu (fuente de verdad)

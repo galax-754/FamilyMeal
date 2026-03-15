@@ -5,7 +5,6 @@ import { Save, Sparkles, Bell, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useToast } from '@/components/ui/Toast'
 import { createClient } from '@/lib/supabase/client'
-import { getWeekNumber } from '@/lib/votes'
 
 interface FamilyData {
   id: string
@@ -43,18 +42,19 @@ export function ConfiguracionCard({ family, members, onUpdate }: Props) {
   useEffect(() => {
     const loadPrefs = async () => {
       try {
-        const semana = getWeekNumber(new Date())
-        const anio = new Date().getFullYear()
         const { data } = await supabase
           .from('user_preferences')
-          .select('profile_id')
+          .select('profile_id, preferences_completed')
           .eq('family_id', family.id)
-          .eq('week_number', semana)
-          .eq('year', anio)
+          .eq('preferences_completed', true)
 
         const filled: Record<string, boolean> = {}
         for (const m of members) {
-          filled[m.id] = (data ?? []).some((p: { profile_id: string }) => p.profile_id === m.id)
+          const completado = (data ?? []).find(
+            (p: { profile_id: string; preferences_completed: boolean }) =>
+              p.profile_id === m.id && p.preferences_completed === true
+          )
+          filled[m.id] = !!completado
         }
         setMemberPrefs(filled)
         setPrefsLoaded(true)

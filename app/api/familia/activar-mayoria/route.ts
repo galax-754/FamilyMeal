@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
     // Obtener todos los meal_id con votos positivos esta semana
     const { data: votedMeals } = await supabase
-      .from('swipe_votes')
+      .from('meal_votes')
       .select('meal_id')
       .eq('family_id', family_id)
       .eq('week_number', weekNumber)

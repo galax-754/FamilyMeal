@@ -20,10 +20,9 @@ ALTER TABLE meals
   ADD COLUMN IF NOT EXISTS tags                 JSONB   DEFAULT '[]';
 
 -- ─────────────────────────────────────────
--- swipe_votes: votos del sistema de match
--- Separado de meal_votes (votos -1/0/1 tradicionales)
+-- meal_votes: votos del sistema de match (swipe)
 -- ─────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS swipe_votes (
+CREATE TABLE IF NOT EXISTS meal_votes (
   id          UUID    PRIMARY KEY DEFAULT gen_random_uuid(),
   meal_id     UUID    NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   profile_id  UUID    NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -35,14 +34,14 @@ CREATE TABLE IF NOT EXISTS swipe_votes (
   UNIQUE(meal_id, profile_id, week_number, year)
 );
 
-ALTER TABLE swipe_votes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meal_votes ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Ver swipe votos familiares" ON swipe_votes
+CREATE POLICY "Ver swipe votos familiares" ON meal_votes
   FOR SELECT USING (
     family_id IN (SELECT family_id FROM profiles WHERE id = auth.uid())
   );
 
-CREATE POLICY "Gestionar swipe votos propios" ON swipe_votes
+CREATE POLICY "Gestionar swipe votos propios" ON meal_votes
   FOR ALL USING (profile_id = auth.uid());
 
 -- ─────────────────────────────────────────

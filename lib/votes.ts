@@ -35,7 +35,7 @@ export async function checkMatch(
       .select('id')
       .eq('family_id', familyId),
     supabase
-      .from('swipe_votes')
+      .from('meal_votes')
       .select('profile_id')
       .eq('meal_id', mealId)
       .eq('family_id', familyId)
@@ -93,7 +93,7 @@ export async function registrarVoto(
   const semana = getWeekNumber(new Date())
   const anio = new Date().getFullYear()
 
-  await supabase.from('swipe_votes').upsert(
+  await supabase.from('meal_votes').upsert(
     {
       meal_id: mealId,
       profile_id: profileId,

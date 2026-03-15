@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const category = searchParams.get('category') || ''
 
   let dbQuery = supabase
-    .from('ingredient_catalog')
+    .from('ingredients')
     .select('id, name, category, unit, price_mxn')
     .order('name')
     .limit(20)
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   const { name, category, unit, price_mxn } = await req.json()
 
   const { data, error } = await supabase
-    .from('ingredient_catalog')
+    .from('ingredients')
     .insert({
       name,
       category: category || 'Otros',

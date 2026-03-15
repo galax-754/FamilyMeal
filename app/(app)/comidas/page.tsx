@@ -102,7 +102,7 @@ function ComidasContent() {
           .eq('family_id', prof.family_id)
           .order('created_at'),
         supabase
-          .from('swipe_votes')
+          .from('meal_votes')
           .select('*')
           .eq('family_id', prof.family_id)
           .eq('week_number', semana)
@@ -185,7 +185,7 @@ function ComidasContent() {
       const semana = getWeekNumber(new Date())
       const anio = new Date().getFullYear()
       const { data: freshVotes } = await supabase
-        .from('swipe_votes')
+        .from('meal_votes')
         .select('*')
         .eq('family_id', familyId)
         .eq('week_number', semana)
